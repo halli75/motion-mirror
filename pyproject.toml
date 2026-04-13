@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "motion-mirror"
+version = "0.1.0"
+description = "Local-first motion transfer pipeline for animating a character image from a reference video."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "gradio>=5,<6",
+  "typer>=0.12,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+]
+
+[project.scripts]
+motion-mirror = "motion_mirror.cli:app"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

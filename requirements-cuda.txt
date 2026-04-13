@@ -1,0 +1,5 @@
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch>=2.2
+torchvision>=0.17
+onnxruntime-gpu>=1.18
+rtmlib>=0.0.13

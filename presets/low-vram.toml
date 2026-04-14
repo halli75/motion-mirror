@@ -1,0 +1,10 @@
+[preset]
+name = "low-vram"
+description = "1.3B VACE backend — runs on 8–12 GB VRAM GPUs (RTX 3060, 4060, etc.)"
+backend = "wan-1.3b-vace"
+resolution = "832x480"
+num_frames = 81
+trajectory_density = 512
+device = "cuda"
+offload_model = false
+t5_cpu = false

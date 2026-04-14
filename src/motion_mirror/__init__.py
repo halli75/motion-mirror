@@ -1,6 +1,8 @@
 from .config import MotionMirrorConfig
 from .exceptions import (
+    HardwareError,
     InputError,
+    InsufficientVRAMError,
     MotionMirrorError,
     MultipleCharactersError,
     MultiplePeopleDetectedError,
@@ -12,6 +14,7 @@ from .exceptions import (
     UnsupportedVideoError,
     VideoDecodeError,
 )
+from .hardware import GPUInfo, auto_config, get_gpu_info, recommend_backend
 from .pipeline import MotionMirrorPipeline
 from .types import (
     GenerationResult,
@@ -27,6 +30,11 @@ __all__ = [
     "PoseSequence",
     "TrajectoryMap",
     "GenerationResult",
+    # Hardware
+    "GPUInfo",
+    "get_gpu_info",
+    "recommend_backend",
+    "auto_config",
     # Exceptions
     "MotionMirrorError",
     "InputError",
@@ -39,4 +47,6 @@ __all__ = [
     "SmallSubjectWarning",
     "SmallSubjectError",
     "MultipleCharactersError",
+    "HardwareError",
+    "InsufficientVRAMError",
 ]

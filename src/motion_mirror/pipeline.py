@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import warnings
+
 from .config import MotionMirrorConfig
 from .extract.pose import extract_pose
 from .extract.segment import segment_subject
@@ -10,6 +12,7 @@ from .extract.trajectory import synthesize_trajectory
 from .generate.controlnet import generate_with_controlnet
 from .generate.models import GenerationRequest
 from .generate.wan_move import generate_with_wan_move
+from .hardware import auto_config
 from .postprocess.audio import passthrough_audio
 
 
@@ -73,12 +76,25 @@ class MotionMirrorPipeline:
         """
         cfg = self.config
 
+        # ── Resolve 'auto' backend from available VRAM ───────────────────────
+        if cfg.backend == "auto":
+            cfg = auto_config(cfg)
+
+        # ── Deprecation: 'controlnet' → 'wan-1.3b-vace' ─────────────────────
+        if cfg.backend == "controlnet":
+            warnings.warn(
+                "backend='controlnet' is deprecated — use 'wan-1.3b-vace' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            object.__setattr__(cfg, "backend", "wan-1.3b-vace")
+
         # ── Input validation ─────────────────────────────────────────────────
-        _VALID_BACKENDS = {"wan-move-14b", "controlnet", "mock"}
+        _VALID_BACKENDS = {"wan-move-14b", "wan-move-fast", "wan-1.3b-vace", "mock"}
         if cfg.backend not in _VALID_BACKENDS:
             raise ValueError(
                 f"Unknown backend {cfg.backend!r}. "
-                "Valid choices: 'wan-move-14b', 'controlnet', 'mock'."
+                f"Valid choices: {sorted(_VALID_BACKENDS)}."
             )
 
         if not image_path.exists():
@@ -110,9 +126,9 @@ class MotionMirrorPipeline:
             device=cfg.device,
         )
 
-        if cfg.backend in ("wan-move-14b", "mock"):
+        if cfg.backend in ("wan-move-14b", "wan-move-fast", "mock"):
             gen = generate_with_wan_move(gen_request, cfg)
-        else:  # "controlnet" — already validated above
+        else:  # "wan-1.3b-vace"
             gen = generate_with_controlnet(gen_request, cfg)
 
         # ── Stage 5: Audio passthrough ───────────────────────────────────────

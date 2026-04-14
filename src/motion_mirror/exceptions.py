@@ -17,6 +17,8 @@ MotionMirrorError
     SmallSubjectWarning   (Warning, not Exception)
     SmallSubjectError
     MultipleCharactersError
+  HardwareError
+    InsufficientVRAMError
 """
 from __future__ import annotations
 
@@ -136,3 +138,31 @@ class MultipleCharactersError(SubjectError):
     def __init__(self, message: str, count: int = 0) -> None:
         super().__init__(message)
         self.count = count
+
+
+# ── Hardware ──────────────────────────────────────────────────────────────────
+
+class HardwareError(MotionMirrorError):
+    """Raised for hardware capability problems (GPU VRAM, driver, etc.)."""
+
+
+class InsufficientVRAMError(HardwareError):
+    """Raised when available GPU VRAM is below the minimum for any backend.
+
+    Attributes
+    ----------
+    available_gb:
+        Detected VRAM in GB.
+    required_gb:
+        Minimum VRAM required for the lightest available backend.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        available_gb: float = 0.0,
+        required_gb: float = 8.0,
+    ) -> None:
+        super().__init__(message)
+        self.available_gb = available_gb
+        self.required_gb = required_gb

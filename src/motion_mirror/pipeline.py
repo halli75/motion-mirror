@@ -57,7 +57,19 @@ class MotionMirrorPipeline:
         FileNotFoundError
             If either input file does not exist.
         ValueError
-            If backend is unknown or inputs fail validation.
+            If backend is unknown.
+        UnsupportedImageError
+            If the character image format is not supported.
+        UnsupportedVideoError
+            If the motion video format is not supported.
+        VideoDecodeError
+            If the video cannot be decoded.
+        NoPoseDetectedError
+            If no person is found in the reference video.
+        MultiplePeopleDetectedError
+            If more than one person is found in the reference video.
+        SmallSubjectError
+            If the detected person is too small in the reference video.
         """
         cfg = self.config
 

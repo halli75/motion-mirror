@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ..config import MotionMirrorConfig
+from ..exceptions import MultipleCharactersError, UnsupportedImageError
 from ..types import SegmentationResult
 
 if TYPE_CHECKING:
@@ -38,17 +39,20 @@ def segment_subject(
     ------
     FileNotFoundError
         If *image_path* does not exist.
-    ValueError
+    UnsupportedImageError
         If the file extension is not supported.
+    MultipleCharactersError
+        If DWPose detects more than one person in the character image
+        (only raised when a pose model is available; skipped in mock mode).
     """
     cfg = config or MotionMirrorConfig()
 
     if not image_path.exists():
         raise FileNotFoundError(f"Image not found: {image_path}")
     if image_path.suffix.lower() not in _SUPPORTED_SUFFIXES:
-        raise ValueError(
+        raise UnsupportedImageError(
             f"Unsupported image format {image_path.suffix!r}. "
-            f"Supported: {sorted(_SUPPORTED_SUFFIXES)}"
+            f"Accepted formats: {sorted(_SUPPORTED_SUFFIXES)}"
         )
 
     from PIL import Image

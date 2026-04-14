@@ -207,11 +207,12 @@ def _generate_real(
         image_encoder=image_encoder,
         torch_dtype=torch.bfloat16,
     )
-    # enable_model_cpu_offload moves one submodel at a time to GPU instead of
-    # loading everything simultaneously.  The full stack (T5 ~12 GB + transformer
-    # ~28 GB + VAE + CLIP) exceeds 32 GB VRAM; offloading keeps peak usage to
-    # the largest single submodel (~28 GB) which fits on a 5090/4090/3090.
-    pipe.enable_model_cpu_offload()
+    # enable_sequential_cpu_offload moves individual layers to GPU one at a time.
+    # enable_model_cpu_offload (submodel-level) is insufficient: the transformer
+    # alone is ~28 GB bfloat16, and forward-pass activations push past 32 GB VRAM.
+    # Sequential offload keeps peak VRAM to a single layer (~hundreds of MB).
+    pipe.enable_sequential_cpu_offload()
+    pipe.enable_attention_slicing(1)
 
     # ── 5. Prepare input image ────────────────────────────────────────────────
     # Load RGBA segmented image; composite onto black background for the model.

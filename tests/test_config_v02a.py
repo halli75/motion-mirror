@@ -194,13 +194,16 @@ def test_cli_download_help_shows_new_groups():
 
 
 def test_cli_run_help_shows_new_flags():
+    import re
     from typer.testing import CliRunner
     from motion_mirror.cli import app
-    runner = CliRunner()
+
+    runner = CliRunner(env={"NO_COLOR": "1", "TERM": "dumb"})
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
-    out = result.output
-    assert "--offload-model" in out
+    # Strip ANSI escape codes — Rich may still emit them even with NO_COLOR
+    out = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", result.output)
+    assert "--offload-model" in out, f"--offload-model not found in:\n{out}"
     assert "--t5-cpu" in out
     assert "--flow-estimator" in out
     assert "--segmenter" in out

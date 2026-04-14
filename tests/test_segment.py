@@ -73,7 +73,8 @@ def test_segment_unsupported_extension_raises(tmp_path):
     bad = tmp_path / "file.bmp"
     bad.write_bytes(b"fake")
     cfg = MotionMirrorConfig(project_root=tmp_path)
-    with pytest.raises(ValueError, match="Unsupported image format"):
+    from motion_mirror.exceptions import UnsupportedImageError
+    with pytest.raises(UnsupportedImageError):
         segment_subject(bad, cfg)
 
 

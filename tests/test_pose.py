@@ -83,7 +83,8 @@ def test_pose_unsupported_extension_raises(tmp_path):
     bad = tmp_path / "file.wmv"
     bad.write_bytes(b"fake")
     cfg = MotionMirrorConfig(backend="mock", device="cpu")
-    with pytest.raises(ValueError, match="Unsupported video format"):
+    from motion_mirror.exceptions import UnsupportedVideoError
+    with pytest.raises(UnsupportedVideoError):
         extract_pose(bad, cfg)
 
 

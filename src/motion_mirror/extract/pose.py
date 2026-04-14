@@ -106,11 +106,14 @@ def extract_pose(
         )
 
     # --- Real path: DWPose-L via rtmlib ---
-    # ENGINEER NOTE: rtmlib class names vary by version.
-    # Verify with: pip show rtmlib && python -c "import rtmlib; print(dir(rtmlib))"
-    # before relying on these imports.
+    # rtmlib >=0.0.13 exposes Wholebody for 133-keypoint COCO-WholeBody estimation.
+    # Older versions used PoseTracker(det=..., pose=...) which was removed.
     try:
-        from rtmlib import PoseTracker  # type: ignore[import]
+        import rtmlib as _rtmlib  # type: ignore[import]
+        _Wholebody = getattr(_rtmlib, "Wholebody", None)
+        _PoseTracker = getattr(_rtmlib, "PoseTracker", None)
+        if _Wholebody is None and _PoseTracker is None:
+            raise ImportError("rtmlib: neither Wholebody nor PoseTracker found")
     except ImportError as exc:
         raise ImportError(
             "rtmlib is not installed. Run: pip install -r requirements-cuda.txt"
@@ -127,25 +130,66 @@ def extract_pose(
             )
 
     backend_ep = "onnxruntime" if cfg.device == "cuda" else "cpu"
-    tracker = PoseTracker(
-        det=det_model_path,
-        pose=pose_model_path,
-        backend=backend_ep,
-        tracking=False,
-    )
+
+    # Try Wholebody first (current API), fall back to legacy PoseTracker
+    tracker = None
+    use_wholebody = False
+    if _Wholebody is not None:
+        try:
+            tracker = _Wholebody(
+                det=str(det_model_path),
+                pose=str(pose_model_path),
+                to_openpose=False,
+                backend=backend_ep,
+                device=cfg.device,
+            )
+            use_wholebody = True
+        except TypeError:
+            pass  # fall through to PoseTracker
+
+    if tracker is None and _PoseTracker is not None:
+        tracker = _PoseTracker(
+            str(pose_model_path),
+            str(det_model_path),
+            backend=backend_ep,
+        )
+
+    if tracker is None:
+        raise RuntimeError("Could not initialise rtmlib tracker — check rtmlib version")
 
     frame_area = frame_w * frame_h
     keypoints_list: list[np.ndarray] = []
 
     for frame_idx, frame in enumerate(frames):
         result = tracker(frame)
-        # rtmlib may return (keypoints, scores) or (keypoints,) depending on version
-        if isinstance(result, tuple):
-            kps_raw = result[0]
-        else:
-            kps_raw = result
 
-        # kps_raw shape: (num_people, 133, 3) or (133, 3) for single-person trackers
+        # Normalise output to (num_people, 133, 3) float32 [x, y, conf].
+        # Wholebody returns (keypoints, scores) where:
+        #   keypoints: (N, 133, 2) float32  — x, y pixel coords
+        #   scores:    (N, 133)   float32  — confidence per keypoint
+        # Some versions already pack conf into dim-2 → (N, 133, 3).
+        if isinstance(result, (tuple, list)) and len(result) == 2:
+            kps_xy, kps_score = result
+            if kps_xy is None or (hasattr(kps_xy, "__len__") and len(kps_xy) == 0):
+                kps_raw = np.zeros((0, 133, 3), dtype=np.float32)
+            else:
+                kps_xy = np.asarray(kps_xy, dtype=np.float32)
+                kps_score = np.asarray(kps_score, dtype=np.float32)
+                if kps_xy.ndim == 2:
+                    kps_xy = kps_xy[np.newaxis]
+                    kps_score = kps_score[np.newaxis] if kps_score.ndim == 1 else kps_score
+                if kps_xy.shape[-1] == 2:
+                    kps_raw = np.concatenate(
+                        [kps_xy, kps_score[:, :, np.newaxis]], axis=2
+                    )  # (N, 133, 3)
+                else:
+                    kps_raw = kps_xy  # already (N, 133, 3)
+        else:
+            kps_raw = np.asarray(result, dtype=np.float32)
+            if kps_raw.ndim == 2:
+                kps_raw = kps_raw[np.newaxis]
+
+        # kps_raw is now (num_people, 133, 3)
         if kps_raw.ndim == 2:
             kps_raw = kps_raw[np.newaxis]  # add person dim → (1, 133, 3)
 

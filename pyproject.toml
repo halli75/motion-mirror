@@ -36,6 +36,17 @@ cpu = [
   "onnxruntime>=1.18",
   "rtmlib>=0.0.13",
 ]
+# v0.2a additions
+# Note: lightx2v must be installed from GitHub: pip install git+https://github.com/ModelTC/LightX2V.git
+# Note: sam2 must be installed from GitHub: pip install git+https://github.com/facebookresearch/sam2.git
+# RAFT weights are auto-downloaded by torchvision — no extra package needed.
+gpu-inference = [
+  "diffusers>=0.33",
+  "transformers",
+  "accelerate",
+  "ftfy",
+  "Pillow",
+]
 
 [project.scripts]
 motion-mirror = "motion_mirror.cli:app"

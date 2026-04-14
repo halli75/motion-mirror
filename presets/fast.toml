@@ -1,0 +1,10 @@
+[preset]
+name = "fast"
+description = "LightX2V 4-step distilled 14B — ~5x faster than default on 24 GB+ cards"
+backend = "wan-move-fast"
+resolution = "832x480"
+num_frames = 81
+trajectory_density = 512
+device = "cuda"
+offload_model = true
+t5_cpu = true

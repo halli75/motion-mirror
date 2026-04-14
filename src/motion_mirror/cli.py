@@ -47,6 +47,7 @@ def _load_preset(name: str) -> dict:
 # ── Model download specs ───────────────────────────────────────────────────────
 
 _MODEL_SPECS: dict[str, dict] = {
+    # ── Pose estimation ───────────────────────────────────────────────────────
     "dwpose-pose": {
         "repo_id": "yzd-v/DWPose",
         "filename": "dw-ll_ucoco_384.onnx",
@@ -61,19 +62,46 @@ _MODEL_SPECS: dict[str, dict] = {
         "cache_subdir": "dwpose",
         "label": "DWPose YOLOX detector",
     },
+    # ── Generation backends ───────────────────────────────────────────────────
     "wan-move": {
         "repo_id": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",
-        "filename": None,  # None = full snapshot_download
+        "filename": None,  # full snapshot_download
         "expected_bytes": 28_000_000_000,
         "cache_subdir": "wan-move",
-        "label": "Wan2.1-I2V-14B-720P (diffusers format, ~28 GB)",
+        "label": "Wan2.1-I2V-14B-720P (diffusers format, ~28 GB) [backend: wan-move-14b]",
     },
+    "wan-1.3b-vace": {
+        "repo_id": "Wan-AI/Wan2.1-VACE-1.3B-diffusers",
+        "filename": None,  # full snapshot_download
+        "expected_bytes": 5_000_000_000,
+        "cache_subdir": "wan-1.3b-vace",
+        "label": "Wan2.1-VACE-1.3B (lightweight, ~5 GB, needs ~8 GB VRAM) [backend: wan-1.3b-vace]",
+    },
+    "wan-move-fast": {
+        "repo_id": "lightx2v/Wan2.1-Distill-Models",
+        "filename": "wan2.1_i2v_720p_lightx2v_4step.safetensors",
+        "expected_bytes": 14_000_000_000,
+        "cache_subdir": "wan-move-fast",
+        "label": "LightX2V 4-step distilled I2V 720P (~14 GB) [backend: wan-move-fast]",
+    },
+    # ── Optional upgrades ─────────────────────────────────────────────────────
+    "sam2": {
+        "repo_id": "facebook/sam2-hiera-large",
+        "filename": None,  # full snapshot_download
+        "expected_bytes": 900_000_000,
+        "cache_subdir": "sam2",
+        "label": "SAM-2 Large segmenter (~900 MB) [--segmenter sam2]",
+    },
+    # Note: RAFT weights are auto-downloaded by torchvision — no entry needed here.
 }
 
 _MODEL_GROUPS = {
-    "dwpose": ["dwpose-pose", "dwpose-det"],
-    "wan-move": ["wan-move"],
-    "all": list(_MODEL_SPECS.keys()),
+    "dwpose":    ["dwpose-pose", "dwpose-det"],
+    "wan-move":  ["wan-move"],
+    "light":     ["wan-1.3b-vace"],
+    "fast":      ["wan-move-fast"],
+    "extras":    ["sam2"],
+    "all":       list(_MODEL_SPECS.keys()),
 }
 
 
@@ -84,13 +112,21 @@ _MODEL_GROUPS = {
 def run(
     image: Path = typer.Argument(..., help="Character image path (PNG/JPG/WEBP)."),
     motion: Path = typer.Argument(..., help="Reference motion video path (MP4/MOV/AVI/MKV)."),
-    backend: Optional[str] = typer.Option(None, help="Generation backend: wan-move-14b | controlnet | mock."),
+    backend: Optional[str] = typer.Option(None, help="Backend: wan-move-14b | wan-move-fast | wan-1.3b-vace | mock | auto."),
     resolution: Optional[str] = typer.Option(None, help="Output resolution WxH, e.g. 832x480."),
     frames: Optional[int] = typer.Option(None, help="Number of output frames."),
     density: Optional[int] = typer.Option(None, help="Trajectory density (512 = default, 1024 = HQ)."),
     device: Optional[str] = typer.Option(None, help="Compute device: cuda | cpu."),
     output_dir: Optional[Path] = typer.Option(None, help="Output directory (default: ./outputs)."),
-    preset: Optional[str] = typer.Option(None, help="Load settings from a preset name (default | hq | mock)."),
+    preset: Optional[str] = typer.Option(None, help="Load settings from a preset name."),
+    # v0.2a VRAM optimisation flags
+    offload_model: bool = typer.Option(False, "--offload-model", help="Layer-by-layer CPU offload (saves VRAM, slower)."),
+    t5_cpu: bool = typer.Option(False, "--t5-cpu", help="Keep T5 text encoder on CPU (~12 GB VRAM saved)."),
+    # v0.2a optional stage upgrades
+    flow_estimator: Optional[str] = typer.Option(None, "--flow-estimator", help="Optical flow backend: farneback | raft."),
+    segmenter: Optional[str] = typer.Option(None, "--segmenter", help="Segmentation model: rembg | sam2."),
+    # v0.2a auto-detection
+    auto: bool = typer.Option(False, "--auto", help="Auto-select backend from available VRAM."),
 ) -> None:
     """Run the full motion transfer pipeline."""
     # Start from preset defaults, then apply explicit CLI overrides
@@ -102,7 +138,19 @@ def run(
         cfg_kwargs["num_frames"] = p.get("num_frames", 81)
         cfg_kwargs["trajectory_density"] = p.get("trajectory_density", 512)
         cfg_kwargs["device"] = p.get("device", "cuda")
+        # v0.2a preset fields
+        if "offload_model" in p:
+            cfg_kwargs["offload_model"] = p["offload_model"]
+        if "t5_cpu" in p:
+            cfg_kwargs["t5_cpu"] = p["t5_cpu"]
+        if "flow_estimator" in p:
+            cfg_kwargs["flow_estimator"] = p["flow_estimator"]
+        if "segmenter" in p:
+            cfg_kwargs["segmenter"] = p["segmenter"]
 
+    # Explicit CLI overrides
+    if auto:
+        cfg_kwargs["backend"] = "auto"
     if backend is not None:
         cfg_kwargs["backend"] = backend
     if resolution is not None:
@@ -116,6 +164,14 @@ def run(
     if output_dir is not None:
         cfg_kwargs["project_root"] = output_dir.parent
         cfg_kwargs["output_dir_name"] = output_dir.name
+    if offload_model:
+        cfg_kwargs["offload_model"] = True
+    if t5_cpu:
+        cfg_kwargs["t5_cpu"] = True
+    if flow_estimator is not None:
+        cfg_kwargs["flow_estimator"] = flow_estimator
+    if segmenter is not None:
+        cfg_kwargs["segmenter"] = segmenter
 
     cfg = MotionMirrorConfig(**cfg_kwargs)
 
@@ -142,7 +198,10 @@ def run(
 def download(
     model: str = typer.Option(
         "all",
-        help="Model(s) to download: all | dwpose | wan-move | dwpose-pose | dwpose-det.",
+        help=(
+            "Model(s) to download: all | dwpose | wan-move | light | fast | extras | "
+            "wan-1.3b-vace | wan-move-fast | sam2 | dwpose-pose | dwpose-det."
+        ),
     ),
     cache_dir: Optional[Path] = typer.Option(None, help="Override default cache directory."),
     skip_check: bool = typer.Option(False, help="Skip disk-space preflight check."),
@@ -273,33 +332,35 @@ def benchmark(
     console.print(f"  Platform: {platform.system()} {platform.release()}")
 
     if gpu_info:
-        try:
-            import torch  # type: ignore[import]
-            if torch.cuda.is_available():
-                idx = torch.cuda.current_device()
-                name = torch.cuda.get_device_name(idx)
-                props = torch.cuda.get_device_properties(idx)
-                total_gb = props.total_memory / 1024 ** 3
-                free_bytes, _ = torch.cuda.mem_get_info(idx)
-                free_gb = free_bytes / 1024 ** 3
-                used_gb = total_gb - free_gb
+        from .hardware import InsufficientVRAMError, get_gpu_info, recommend_backend
 
-                console.print(f"\n  GPU     : {name}")
-                console.print(f"  VRAM    : {total_gb:.1f} GB total, "
-                               f"{used_gb:.1f} GB used, {free_gb:.1f} GB free")
-                if total_gb < 22:
-                    console.print(
-                        f"\n  [yellow]Warning:[/yellow] Wan-Move-14B requires ~24 GB VRAM. "
-                        f"Your GPU has {total_gb:.1f} GB. Use --backend controlnet for lighter inference."
-                    )
-                else:
-                    console.print(f"\n  [green]✓[/green] VRAM sufficient for Wan-Move-14B.")
-            else:
-                console.print("\n  [yellow]No CUDA GPU detected.[/yellow]")
-                console.print("  Wan-Move-14B requires a 24 GB+ NVIDIA GPU.")
-        except ImportError:
-            console.print("\n  [yellow]torch not installed.[/yellow]")
-            console.print("  Run: pip install -r requirements-cuda.txt")
+        info = get_gpu_info()
+        if info is None:
+            console.print("\n  [yellow]No CUDA GPU detected.[/yellow]")
+            console.print("  Real generation requires a CUDA GPU with 8+ GB VRAM.")
+        else:
+            console.print(f"\n  GPU     : {info.name}")
+            console.print(
+                f"  VRAM    : {info.total_vram_gb:.1f} GB total, "
+                f"{info.used_vram_gb:.1f} GB used, "
+                f"{info.free_vram_gb:.1f} GB free"
+            )
+            try:
+                backend_rec, overrides = recommend_backend(info.free_vram_gb)
+                override_str = (
+                    "  (" + ", ".join(f"--{k.replace('_', '-')}" for k in overrides) + ")"
+                    if overrides else ""
+                )
+                console.print(
+                    f"\n  [green]Recommended backend:[/green] "
+                    f"[cyan]{backend_rec}[/cyan]{override_str}"
+                )
+                console.print(f"  Run: [dim]motion-mirror run --backend {backend_rec} ...[/dim]")
+            except InsufficientVRAMError as exc:
+                console.print(
+                    f"\n  [red]Insufficient VRAM:[/red] {exc.available_gb:.1f} GB free, "
+                    f"need {exc.required_gb:.0f} GB minimum."
+                )
     else:
         console.print("\n  Run with [cyan]--gpu-info[/cyan] to check VRAM.")
 

@@ -49,17 +49,17 @@ def _load_preset(name: str) -> dict:
 _MODEL_SPECS: dict[str, dict] = {
     "dwpose-pose": {
         "repo_id": "yzd-v/DWPose",
-        "filename": "rtmpose-l_8xb32-270e_coco-wholebody-384x288-eaf3f731_20230312.onnx",
-        "expected_bytes": 225_000_000,
+        "filename": "dw-ll_ucoco_384.onnx",
+        "expected_bytes": 134_000_000,
         "cache_subdir": "dwpose",
-        "label": "DWPose-L pose model",
+        "label": "DWPose wholebody pose model",
     },
     "dwpose-det": {
         "repo_id": "yzd-v/DWPose",
-        "filename": "yolox_l_8xb8-300e_humanart-a39d44ed.onnx",
-        "expected_bytes": 209_000_000,
+        "filename": "yolox_l.onnx",
+        "expected_bytes": 217_000_000,
         "cache_subdir": "dwpose",
-        "label": "DWPose-L detector",
+        "label": "DWPose YOLOX detector",
     },
     "wan-move": {
         "repo_id": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",

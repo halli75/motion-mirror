@@ -116,8 +116,8 @@ def extract_pose(
             "rtmlib is not installed. Run: pip install -r requirements-cuda.txt"
         ) from exc
 
-    pose_model_path = cfg.model_cache("dwpose") / "rtmpose-l_8xb32-270e_coco-wholebody-384x288-eaf3f731_20230312.onnx"
-    det_model_path = cfg.model_cache("dwpose") / "yolox_l_8xb8-300e_humanart-a39d44ed.onnx"
+    pose_model_path = cfg.model_cache("dwpose") / "dw-ll_ucoco_384.onnx"
+    det_model_path  = cfg.model_cache("dwpose") / "yolox_l.onnx"
 
     for p in (pose_model_path, det_model_path):
         if not p.exists():

@@ -167,7 +167,6 @@ def _generate_real(
     try:
         from PIL import Image  # type: ignore[import]
         from diffusers import AutoencoderKLWan, WanImageToVideoPipeline  # type: ignore[import]
-        from diffusers.utils import export_to_video  # type: ignore[import]
         from transformers import CLIPVisionModel  # type: ignore[import]
     except ImportError as exc:
         raise ImportError(
@@ -253,8 +252,23 @@ def _generate_real(
         generator=generator,
     ).frames[0]
 
-    # ── 8. Export to video ────────────────────────────────────────────────────
-    export_to_video(output, str(request.output_path), fps=16)
+    # ── 8. Export to video (cv2 — avoids imageio/imageio-ffmpeg dependency) ────
+    # pipe().frames[0] is a list of float32 numpy arrays in [0,1] RGB.
+    frames_list = output if isinstance(output, list) else list(output)
+    if not frames_list:
+        raise RuntimeError("Pipeline returned no frames")
+    f0 = np.array(frames_list[0])
+    h_out, w_out = f0.shape[:2]
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(request.output_path), fourcc, 16.0, (w_out, h_out))
+    if not writer.isOpened():
+        raise RuntimeError(f"cv2.VideoWriter failed to open: {request.output_path}")
+    for frame in frames_list:
+        arr = np.array(frame)
+        if arr.dtype != np.uint8:
+            arr = (arr * 255).clip(0, 255).astype(np.uint8)
+        writer.write(cv2.cvtColor(arr, cv2.COLOR_RGB2BGR))
+    writer.release()
 
     return GenerationResult(
         video_path=request.output_path,

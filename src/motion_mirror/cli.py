@@ -166,7 +166,11 @@ def download(
     # Disk-space preflight
     if not skip_check:
         total_needed = sum(_MODEL_SPECS[k]["expected_bytes"] for k in keys)
-        free = shutil.disk_usage(cfg.cache_dir).free
+        # cache_dir may not exist yet — check the nearest existing ancestor
+        check_path = cfg.cache_dir
+        while not check_path.exists() and check_path != check_path.parent:
+            check_path = check_path.parent
+        free = shutil.disk_usage(check_path).free
         if free < total_needed:
             needed_gb = total_needed / 1024 ** 3
             free_gb = free / 1024 ** 3

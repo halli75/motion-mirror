@@ -270,6 +270,13 @@ def _generate_real(
         writer.write(cv2.cvtColor(arr, cv2.COLOR_RGB2BGR))
     writer.release()
 
+    # ── 9. Release VRAM so back-to-back calls in the same process don't OOM ──
+    # Sequential CPU offload hooks keep references alive; explicit deletion +
+    # empty_cache() is needed before a second generation can safely run.
+    del pipe, vae, image_encoder
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     return GenerationResult(
         video_path=request.output_path,
         backend="wan-move-14b",

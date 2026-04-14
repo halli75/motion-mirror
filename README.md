@@ -41,13 +41,15 @@ character.png + motion_video.mp4
 
 | Component | Minimum | Recommended |
 |---|---|---|
-| GPU VRAM | 24 GB (RTX 3090 / 4090) | 40 GB+ (A100) |
+| GPU VRAM | 24 GB (RTX 3090 / 4090) | 32 GB+ (RTX 5090, A100) |
 | System RAM | 32 GB | 64 GB |
 | Disk space | 50 GB free | 80 GB free |
 | CUDA | 12.x | 12.x |
 | Python | 3.11 | 3.11+ |
 
 CPU-only mode is not supported for real generation (mock mode works for testing).
+
+> **VRAM note:** The 14B model uses sequential layer-by-layer CPU offloading, so it runs on 24–32 GB VRAM cards. System RAM is used as overflow storage during inference.
 
 ---
 
@@ -71,13 +73,19 @@ Or from PyPI once published:
 pip install motion-mirror[cuda]
 ```
 
-### 3. Download model weights (~41 GB total)
+### 3. Install GPU inference dependencies
 
 ```bash
-# Wan2.1-I2V-14B generation model (~28 GB)
+pip install "diffusers>=0.33" transformers accelerate ftfy
+```
+
+### 4. Download model weights (~28 GB total)
+
+```bash
+# Wan2.1-I2V-14B generation model (~28 GB, diffusers format)
 motion-mirror download --model wan-move
 
-# DWPose-L pose estimation (~430 MB)
+# DWPose-L pose estimation (~350 MB)
 motion-mirror download --model dwpose
 ```
 
@@ -165,9 +173,9 @@ result = pipeline.run(
     motion_video_path=Path("motion.mp4"),
 )
 
-print(result.output_path)   # Path to result.mp4
-print(result.segmentation_path)   # RGBA PNG
-print(result.trajectory_path)     # .npz trajectory map
+print(result.output_path)        # Path to result.mp4
+print(result.segmentation_path)  # RGBA PNG
+print(result.trajectory_path)    # .npz trajectory map
 ```
 
 ### Exception types
@@ -198,13 +206,23 @@ The character's face in the output may not closely match the input photo, especi
 Multi-person reference videos raise `MultiplePeopleDetectedError`. Crop to one person, or use `--person-index N` (planned for v0.2).
 
 **24 GB+ GPU required**
-The 14B model requires at minimum an RTX 3090 or 4090 with CPU offloading. Lower-VRAM support (8–12 GB) is planned for v0.2 via the 1.3B + ControlNet backend and GGUF quantization.
+The 14B model requires at minimum an RTX 3090 or 4090. Sequential CPU offloading is used automatically — system RAM absorbs model layers not currently in use, so 32 GB+ system RAM is recommended alongside 24 GB+ VRAM.
 
-**~41 GB model download**
-First run requires downloading ~28 GB (Wan2.1-I2V) + ~430 MB (DWPose). A fast internet connection and ~50 GB free disk space are needed.
+**~28 GB model download**
+First run requires downloading ~28 GB (Wan2.1-I2V) + ~350 MB (DWPose). A fast internet connection and ~50 GB free disk space are needed.
 
 **Generation time**
-A 5-second clip takes roughly 280–350 seconds on an RTX 4090. An H100 runs in ~85 seconds.
+With sequential CPU offloading (required for ≤32 GB VRAM), a 17-frame clip takes ~8–10 minutes on an RTX 5090. An 81-frame clip (~5 seconds at 16 fps) takes approximately 40–50 minutes. Generation is substantially faster on A100/H100 with full VRAM capacity.
+
+---
+
+## Validated hardware
+
+End-to-end GPU tests (6/6 passing) verified on:
+
+| GPU | VRAM | Result |
+|---|---|---|
+| RTX 5090 (RunPod) | 32 GB | All tests pass ✅ |
 
 ---
 
@@ -227,14 +245,14 @@ A 5-second clip takes roughly 280–350 seconds on an RTX 4090. An H100 runs in 
 # Install with dev dependencies
 pip install -e ".[dev]"
 
-# Run all non-GPU tests
+# Run all non-GPU tests (no GPU or model weights needed)
 pytest -m "not gpu" -v
 
 # Run GPU tests (requires downloaded weights + CUDA GPU)
 pytest -m gpu -v
 ```
 
-CI runs `pytest -m "not gpu"` on every push via GitHub Actions.
+CI runs `pytest -m "not gpu"` on every push via GitHub Actions (128 tests, no GPU required).
 
 ---
 

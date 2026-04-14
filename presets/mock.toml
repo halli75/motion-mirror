@@ -1,0 +1,8 @@
+[preset]
+name = "mock"
+description = "Mock backend — for testing without GPU or model weights"
+backend = "mock"
+resolution = "128x64"
+num_frames = 4
+trajectory_density = 32
+device = "cpu"

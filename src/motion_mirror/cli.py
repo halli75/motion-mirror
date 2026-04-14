@@ -62,11 +62,11 @@ _MODEL_SPECS: dict[str, dict] = {
         "label": "DWPose-L detector",
     },
     "wan-move": {
-        "repo_id": "Wan-AI/Wan2.1-I2V-14B-720P",  # VERIFY against HF model card
+        "repo_id": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",
         "filename": None,  # None = full snapshot_download
         "expected_bytes": 28_000_000_000,
         "cache_subdir": "wan-move",
-        "label": "Wan-Move-14B (full repo ~28 GB)",
+        "label": "Wan2.1-I2V-14B-720P (diffusers format, ~28 GB)",
     },
 }
 

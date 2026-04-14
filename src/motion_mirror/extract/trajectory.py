@@ -1,6 +1,7 @@
 """Trajectory synthesis — the core algorithmic stage of Motion Mirror.
 
-Three-layer approach (all CPU / pure numpy+opencv, no GPU required):
+Three-layer approach (all CPU / pure numpy+opencv, no GPU required for
+the default Farneback estimator):
 
   Layer 1 — Skeleton keypoint trajectories
     Direct tracks from confident DWPose keypoints, coordinate-normalised
@@ -12,8 +13,14 @@ Three-layer approach (all CPU / pure numpy+opencv, no GPU required):
     fall off as a Gaussian in normalised space (σ=0.15).
 
   Layer 3 — Optical-flow tracks for non-rigid regions
-    cv2.calcOpticalFlowFarneback computed frame-0 → frame-k directly
-    (never chained) for seed points in hair/clothing regions.
+    Flow computed frame-0 → frame-k directly (never chained) for seed
+    points in hair/clothing regions.  Two estimators are supported:
+
+      farneback (default) — cv2.calcOpticalFlowFarneback, pure CPU.
+      raft               — torchvision RAFT-Large (v0.2a, GPU recommended).
+                           Weights auto-download via torchvision (~20 MB).
+                           Falls back to Farneback if torchvision is absent
+                           or no GPU is available.
 
 Camera motion is compensated first by computing a per-frame homography
 on the background pixels and warping frames into frame-0 space before
@@ -48,6 +55,10 @@ _FB_PARAMS = dict(
     poly_sigma=1.2,
     flags=0,
 )
+
+# Module-level RAFT model cache — keyed by device string so we don't reload
+# when the same device is requested repeatedly.
+_raft_cache: dict[str, object] = {}
 
 # Dilation kernel sizes
 _MASK_DILATE_BG_PX = 20   # isolate background for homography
@@ -128,6 +139,8 @@ def synthesize_trajectory(
         body_transform,
         char_size,
         density,
+        flow_estimator=cfg.flow_estimator,
+        device=cfg.device,
     )
     # layer3: (F, N3, 2), flow_fields: (F-1, H, W, 2)
 
@@ -368,12 +381,124 @@ def _layer2_interpolated_tracks(
     return tracks.astype(np.float32)
 
 
+# ── Optical flow helpers ──────────────────────────────────────────────────────
+
+
+def _compute_flow_farneback(
+    frame0_bgr: np.ndarray,
+    framek_bgr: np.ndarray,
+) -> np.ndarray:
+    """Dense optical flow via cv2.calcOpticalFlowFarneback (CPU, no deps)."""
+    ref_gray = cv2.cvtColor(frame0_bgr, cv2.COLOR_BGR2GRAY)
+    cur_gray = cv2.cvtColor(framek_bgr, cv2.COLOR_BGR2GRAY)
+    return cv2.calcOpticalFlowFarneback(ref_gray, cur_gray, None, **_FB_PARAMS).astype(np.float32)
+
+
+def _load_raft(device: str) -> object:
+    """Load RAFT-Large from torchvision, cached by device.
+
+    Weights auto-download to ~/.cache/torch/hub/checkpoints/ (~20 MB).
+    """
+    if device in _raft_cache:
+        return _raft_cache[device]
+
+    try:
+        import torch  # type: ignore[import]
+        from torchvision.models.optical_flow import (  # type: ignore[import]
+            Raft_Large_Weights,
+            raft_large,
+        )
+    except ImportError as exc:
+        raise ImportError(
+            "torchvision is required for RAFT flow estimation. "
+            "Run: pip install torchvision"
+        ) from exc
+
+    model = raft_large(weights=Raft_Large_Weights.DEFAULT, progress=False)
+    model = model.eval().to(device)
+    _raft_cache[device] = model
+    return model
+
+
+def _compute_flow_raft(
+    frame0_bgr: np.ndarray,
+    framek_bgr: np.ndarray,
+    device: str = "cpu",
+) -> np.ndarray:
+    """Dense optical flow via RAFT-Large (GPU recommended, CPU fallback).
+
+    Returns (H, W, 2) float32 flow field in pixels.
+    """
+    import torch  # type: ignore[import]
+    from torchvision.models.optical_flow import Raft_Large_Weights  # type: ignore[import]
+
+    model = _load_raft(device)
+    transforms = Raft_Large_Weights.DEFAULT.transforms()
+
+    def _to_tensor(bgr: np.ndarray) -> "torch.Tensor":
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        return torch.from_numpy(rgb).permute(2, 0, 1)  # (3, H, W) uint8
+
+    t0 = _to_tensor(frame0_bgr)
+    tk = _to_tensor(framek_bgr)
+    t0, tk = transforms(t0, tk)           # normalise to float in expected range
+    t0 = t0.unsqueeze(0).to(device)       # (1, 3, H, W)
+    tk = tk.unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        flows = model(t0, tk)             # list of (1, 2, H, W)
+
+    flow = flows[-1].squeeze(0).permute(1, 2, 0).cpu().numpy()  # (H, W, 2)
+    return flow.astype(np.float32)
+
+
+def _compute_flow_pair(
+    frame0_bgr: np.ndarray,
+    framek_bgr: np.ndarray,
+    estimator: str = "farneback",
+    device: str = "cpu",
+) -> np.ndarray:
+    """Dispatch optical flow computation to the selected estimator.
+
+    Parameters
+    ----------
+    frame0_bgr:
+        Reference frame (BGR uint8).
+    framek_bgr:
+        Target frame (BGR uint8).
+    estimator:
+        ``"farneback"`` (CPU, always available) or ``"raft"`` (GPU preferred,
+        requires torchvision).  Falls back to Farneback with a warning if RAFT
+        cannot be loaded.
+    device:
+        Torch device string, used only for RAFT.
+
+    Returns
+    -------
+    np.ndarray
+        Dense flow field, shape ``(H, W, 2)`` float32.
+    """
+    if estimator == "raft":
+        try:
+            return _compute_flow_raft(frame0_bgr, framek_bgr, device=device)
+        except (ImportError, Exception) as exc:
+            import warnings
+            warnings.warn(
+                f"RAFT flow estimation failed ({exc}); falling back to Farneback.",
+                UserWarning,
+                stacklevel=4,
+            )
+    return _compute_flow_farneback(frame0_bgr, framek_bgr)
+
+
 def _layer3_flow_tracks(
     stabilized_frames: list[np.ndarray],  # list of (H, W, 3) BGR
     subject_mask: np.ndarray,             # (H, W) uint8
     body_transform: np.ndarray,           # 3x3
     char_size: tuple[int, int],
     density: int,
+    flow_estimator: str = "farneback",
+    device: str = "cpu",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return ((F, N3, 2), (F-1, H, W, 2)) optical-flow tracks for non-rigid regions.
 
@@ -383,8 +508,7 @@ def _layer3_flow_tracks(
     char_w, char_h = char_size
     n3 = density // 4
 
-    ref_gray = cv2.cvtColor(stabilized_frames[0], cv2.COLOR_BGR2GRAY)
-    fh, fw = ref_gray.shape
+    fh, fw = stabilized_frames[0].shape[:2]
 
     # Non-rigid region: dilated mask minus dilated body bbox (hair, clothing)
     nr_mask = _build_nonrigid_mask(subject_mask)
@@ -414,10 +538,12 @@ def _layer3_flow_tracks(
     flow_fields: list[np.ndarray] = []
 
     for k in range(1, num_frames):
-        cur_gray = cv2.cvtColor(stabilized_frames[k], cv2.COLOR_BGR2GRAY)
-        # Frame-0 → frame-k directly (spec requirement)
-        flow = cv2.calcOpticalFlowFarneback(ref_gray, cur_gray, None, **_FB_PARAMS)
-        flow_fields.append(flow.astype(np.float32))  # (H, W, 2)
+        # Frame-0 → frame-k directly (spec requirement — never chain)
+        flow = _compute_flow_pair(
+            stabilized_frames[0], stabilized_frames[k],
+            estimator=flow_estimator, device=device,
+        )
+        flow_fields.append(flow)  # (H, W, 2)
 
         # Sample flow at seed positions (clip to valid range)
         xi = np.clip(seed_x.astype(np.int32), 0, fw - 1)

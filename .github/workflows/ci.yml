@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Lint + non-GPU tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install onnxruntime (required by rembg)
+        run: pip install onnxruntime --quiet
+
+      - name: Install package + dev deps
+        run: pip install -e ".[dev]" --quiet
+
+      - name: Check imports
+        run: |
+          python -c "import motion_mirror; print('motion_mirror OK')"
+          python -c "from motion_mirror.cli import app; print('cli OK')"
+          python -c "from motion_mirror.ui.app import create_app; print('ui OK')"
+
+      - name: Run non-GPU tests
+        run: pytest -m "not gpu" -v --tb=short

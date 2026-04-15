@@ -30,9 +30,8 @@ def test_resolution_wh():
 
 
 def test_resolution_wh_invalid():
-    c = MotionMirrorConfig(resolution="bad")
     with pytest.raises(ValueError):
-        _ = c.resolution_wh
+        MotionMirrorConfig(resolution="bad")
 
 
 def test_model_cache_creates_dir():

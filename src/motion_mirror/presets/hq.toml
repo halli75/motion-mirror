@@ -1,0 +1,8 @@
+[preset]
+name = "hq"
+description = "High quality — 1280x720, 81 frames, density 1024"
+backend = "wan-move-14b"
+resolution = "1280x720"
+num_frames = 81
+trajectory_density = 1024
+device = "cuda"

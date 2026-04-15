@@ -67,12 +67,10 @@ def extract_pose(
     fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
     frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     # Warn on extreme frame rates (temporal mapping quality degrades)
     if fps < 12.0 or fps > 60.0:
-        import warnings as _w
-        _w.warn(
+        warnings.warn(
             f"Reference video FPS is {fps:.1f} — outside the 12–60 fps range. "
             "Temporal mapping quality may be degraded.",
             UserWarning,
@@ -133,7 +131,6 @@ def extract_pose(
 
     # Try Wholebody first (current API), fall back to legacy PoseTracker
     tracker = None
-    use_wholebody = False
     if _Wholebody is not None:
         try:
             tracker = _Wholebody(
@@ -143,7 +140,6 @@ def extract_pose(
                 backend=backend_ep,
                 device=cfg.device,
             )
-            use_wholebody = True
         except TypeError:
             pass  # fall through to PoseTracker
 
@@ -205,9 +201,8 @@ def extract_pose(
             if num_people > 1:
                 raise MultiplePeopleDetectedError(
                     f"Multiple people detected ({num_people}) in the reference video. "
-                    "Motion Mirror v0.1 supports single-person transfer only. "
-                    "Crop the reference video to show one person, or use "
-                    "--person-index N to select which person to track.",
+                    "Motion Mirror currently supports single-person transfer only. "
+                    "Crop the reference video to show one person.",
                     count=num_people,
                 )
 

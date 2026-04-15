@@ -13,16 +13,12 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ..config import MotionMirrorConfig
-from ..exceptions import MultipleCharactersError, UnsupportedImageError
+from ..exceptions import UnsupportedImageError
 from ..types import SegmentationResult
-
-if TYPE_CHECKING:
-    pass
 
 _SUPPORTED_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 

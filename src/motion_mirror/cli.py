@@ -1,15 +1,7 @@
-"""Motion Mirror command-line interface.
-
-Commands
---------
-run         Run the motion transfer pipeline on an image + video.
-download    Download model weights to the local cache.
-presets     List available generation presets.
-benchmark   Print GPU diagnostics and VRAM info.
-ui          Launch the Gradio web UI.
-"""
+"""Motion Mirror command-line interface."""
 from __future__ import annotations
 
+import importlib.resources
 import shutil
 import sys
 import tomllib
@@ -24,30 +16,40 @@ from .config import MotionMirrorConfig
 from .pipeline import MotionMirrorPipeline
 
 app = typer.Typer(
-    help="Motion Mirror — local-first motion transfer.",
+    help="Motion Mirror - local-first motion transfer.",
     no_args_is_help=True,
 )
 console = Console()
 
-# ── Preset helpers ─────────────────────────────────────────────────────────────
+_PRESETS_DIR = importlib.resources.files("motion_mirror") / "presets"
 
-_PRESETS_DIR = Path(__file__).parent.parent.parent / "presets"
+
+def _list_preset_files() -> list:
+    """Return sorted list of preset Traversable entries (.toml files)."""
+    return sorted(
+        (p for p in _PRESETS_DIR.iterdir() if p.name.endswith(".toml") and p.is_file()),
+        key=lambda p: p.name,
+    )
 
 
 def _load_preset(name: str) -> dict:
     path = _PRESETS_DIR / f"{name}.toml"
-    if not path.exists():
-        available = [p.stem for p in sorted(_PRESETS_DIR.glob("*.toml"))]
+    if not path.is_file():
+        available = [p.name.rsplit(".", 1)[0] for p in _list_preset_files()]
         raise typer.BadParameter(
             f"Preset {name!r} not found. Available: {available}"
         )
     return tomllib.loads(path.read_text(encoding="utf-8"))["preset"]
 
 
-# ── Model download specs ───────────────────────────────────────────────────────
+def _is_spec_cached(dest_dir: Path, spec: dict) -> bool:
+    required_paths = spec.get("required_paths")
+    if required_paths:
+        return all((dest_dir / rel_path).exists() for rel_path in required_paths)
+    return any(dest_dir.iterdir()) if dest_dir.exists() else False
+
 
 _MODEL_SPECS: dict[str, dict] = {
-    # ── Pose estimation ───────────────────────────────────────────────────────
     "dwpose-pose": {
         "repo_id": "yzd-v/DWPose",
         "filename": "dw-ll_ucoco_384.onnx",
@@ -62,50 +64,74 @@ _MODEL_SPECS: dict[str, dict] = {
         "cache_subdir": "dwpose",
         "label": "DWPose YOLOX detector",
     },
-    # ── Generation backends ───────────────────────────────────────────────────
     "wan-move": {
         "repo_id": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",
-        "filename": None,  # full snapshot_download
+        "filename": None,
         "expected_bytes": 28_000_000_000,
         "cache_subdir": "wan-move",
         "label": "Wan2.1-I2V-14B-720P (diffusers format, ~28 GB) [backend: wan-move-14b]",
     },
     "wan-1.3b-vace": {
         "repo_id": "Wan-AI/Wan2.1-VACE-1.3B-diffusers",
-        "filename": None,  # full snapshot_download
+        "filename": None,
         "expected_bytes": 5_000_000_000,
         "cache_subdir": "wan-1.3b-vace",
         "label": "Wan2.1-VACE-1.3B (lightweight, ~5 GB, needs ~8 GB VRAM) [backend: wan-1.3b-vace]",
     },
     "wan-move-fast": {
-        "repo_id": "lightx2v/Wan2.1-Distill-Models",
-        "filename": "wan2.1_i2v_720p_lightx2v_4step.safetensors",
-        "expected_bytes": 14_000_000_000,
+        "expected_bytes": 45_000_000_000,
         "cache_subdir": "wan-move-fast",
-        "label": "LightX2V 4-step distilled I2V 720P (~14 GB) [backend: wan-move-fast]",
+        "label": "LightX2V Wan2.1 I2V 4-step fast backend (~45 GB with companion Wan assets) [backend: wan-move-fast]",
+        "required_paths": [
+            "wan_i2v_distill_4step_cfg_4090.json",
+            "wan2.1_i2v_720p_scaled_fp8_e4m3_lightx2v_4step.safetensors",
+            "config.json",
+            "models_t5_umt5-xxl-enc-bf16.pth",
+            "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
+            "Wan2.1_VAE.pth",
+            "google",
+            "xlm-roberta-large",
+        ],
+        "sources": [
+            {
+                "repo_id": "lightx2v/Wan2.1-Distill-Models",
+                "filename": "wan2.1_i2v_720p_scaled_fp8_e4m3_lightx2v_4step.safetensors",
+            },
+            {
+                "repo_id": "lightx2v/Wan2.1-Distill-Models",
+                "filename": "config.json",
+            },
+            {
+                "repo_id": "Wan-AI/Wan2.1-I2V-14B-720P",
+                "filename": None,
+                "allow_patterns": [
+                    "models_t5_umt5-xxl-enc-bf16.pth",
+                    "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
+                    "Wan2.1_VAE.pth",
+                    "google/**",
+                    "xlm-roberta-large/**",
+                    "configuration.json",
+                ],
+            },
+        ],
     },
-    # ── Optional upgrades ─────────────────────────────────────────────────────
     "sam2": {
         "repo_id": "facebook/sam2-hiera-large",
-        "filename": None,  # full snapshot_download
+        "filename": None,
         "expected_bytes": 900_000_000,
         "cache_subdir": "sam2",
         "label": "SAM-2 Large segmenter (~900 MB) [--segmenter sam2]",
     },
-    # Note: RAFT weights are auto-downloaded by torchvision — no entry needed here.
 }
 
 _MODEL_GROUPS = {
-    "dwpose":    ["dwpose-pose", "dwpose-det"],
-    "wan-move":  ["wan-move"],
-    "light":     ["wan-1.3b-vace"],
-    "fast":      ["wan-move-fast"],
-    "extras":    ["sam2"],
-    "all":       list(_MODEL_SPECS.keys()),
+    "dwpose": ["dwpose-pose", "dwpose-det"],
+    "wan-move": ["wan-move"],
+    "light": ["wan-1.3b-vace"],
+    "fast": ["wan-move-fast"],
+    "extras": ["sam2"],
+    "all": ["dwpose-pose", "dwpose-det", "wan-move", "wan-1.3b-vace", "wan-move-fast", "sam2"],
 }
-
-
-# ── run ───────────────────────────────────────────────────────────────────────
 
 
 @app.command()
@@ -119,36 +145,30 @@ def run(
     device: Optional[str] = typer.Option(None, help="Compute device: cuda | cpu."),
     output_dir: Optional[Path] = typer.Option(None, help="Output directory (default: ./outputs)."),
     preset: Optional[str] = typer.Option(None, help="Load settings from a preset name."),
-    # v0.2a VRAM optimisation flags
     offload_model: bool = typer.Option(False, "--offload-model", help="Layer-by-layer CPU offload (saves VRAM, slower)."),
     t5_cpu: bool = typer.Option(False, "--t5-cpu", help="Keep T5 text encoder on CPU (~12 GB VRAM saved)."),
-    # v0.2a optional stage upgrades
     flow_estimator: Optional[str] = typer.Option(None, "--flow-estimator", help="Optical flow backend: farneback | raft."),
     segmenter: Optional[str] = typer.Option(None, "--segmenter", help="Segmentation model: rembg | sam2."),
-    # v0.2a auto-detection
     auto: bool = typer.Option(False, "--auto", help="Auto-select backend from available VRAM."),
 ) -> None:
     """Run the full motion transfer pipeline."""
-    # Start from preset defaults, then apply explicit CLI overrides
     cfg_kwargs: dict = {}
     if preset:
-        p = _load_preset(preset)
-        cfg_kwargs["backend"] = p.get("backend", "wan-move-14b")
-        cfg_kwargs["resolution"] = p.get("resolution", "832x480")
-        cfg_kwargs["num_frames"] = p.get("num_frames", 81)
-        cfg_kwargs["trajectory_density"] = p.get("trajectory_density", 512)
-        cfg_kwargs["device"] = p.get("device", "cuda")
-        # v0.2a preset fields
-        if "offload_model" in p:
-            cfg_kwargs["offload_model"] = p["offload_model"]
-        if "t5_cpu" in p:
-            cfg_kwargs["t5_cpu"] = p["t5_cpu"]
-        if "flow_estimator" in p:
-            cfg_kwargs["flow_estimator"] = p["flow_estimator"]
-        if "segmenter" in p:
-            cfg_kwargs["segmenter"] = p["segmenter"]
+        preset_data = _load_preset(preset)
+        cfg_kwargs["backend"] = preset_data.get("backend", "wan-move-14b")
+        cfg_kwargs["resolution"] = preset_data.get("resolution", "832x480")
+        cfg_kwargs["num_frames"] = preset_data.get("num_frames", 81)
+        cfg_kwargs["trajectory_density"] = preset_data.get("trajectory_density", 512)
+        cfg_kwargs["device"] = preset_data.get("device", "cuda")
+        if "offload_model" in preset_data:
+            cfg_kwargs["offload_model"] = preset_data["offload_model"]
+        if "t5_cpu" in preset_data:
+            cfg_kwargs["t5_cpu"] = preset_data["t5_cpu"]
+        if "flow_estimator" in preset_data:
+            cfg_kwargs["flow_estimator"] = preset_data["flow_estimator"]
+        if "segmenter" in preset_data:
+            cfg_kwargs["segmenter"] = preset_data["segmenter"]
 
-    # Explicit CLI overrides
     if auto:
         cfg_kwargs["backend"] = "auto"
     if backend is not None:
@@ -175,8 +195,10 @@ def run(
 
     cfg = MotionMirrorConfig(**cfg_kwargs)
 
-    console.print(f"[bold]Motion Mirror[/bold] — backend=[cyan]{cfg.backend}[/cyan] "
-                  f"res=[cyan]{cfg.resolution}[/cyan] frames=[cyan]{cfg.num_frames}[/cyan]")
+    console.print(
+        f"[bold]Motion Mirror[/bold] - backend=[cyan]{cfg.backend}[/cyan] "
+        f"res=[cyan]{cfg.resolution}[/cyan] frames=[cyan]{cfg.num_frames}[/cyan]"
+    )
     console.print(f"  image : {image}")
     console.print(f"  motion: {motion}")
 
@@ -189,9 +211,6 @@ def run(
     except Exception as exc:
         console.print(f"[red]Pipeline error:[/red] {exc}", style="bold")
         raise typer.Exit(code=1)
-
-
-# ── download ──────────────────────────────────────────────────────────────────
 
 
 @app.command()
@@ -222,10 +241,8 @@ def download(
             console.print(f"  Valid: {list(_MODEL_GROUPS.keys()) + list(_MODEL_SPECS.keys())}")
             raise typer.Exit(code=1)
 
-    # Disk-space preflight
     if not skip_check:
-        total_needed = sum(_MODEL_SPECS[k]["expected_bytes"] for k in keys)
-        # cache_dir may not exist yet — check the nearest existing ancestor
+        total_needed = sum(_MODEL_SPECS[key]["expected_bytes"] for key in keys)
         check_path = cfg.cache_dir
         while not check_path.exists() and check_path != check_path.parent:
             check_path = check_path.parent
@@ -242,36 +259,65 @@ def download(
     for key in keys:
         spec = _MODEL_SPECS[key]
         dest_dir = cfg.model_cache(spec["cache_subdir"])
+        if key == "wan-move-fast":
+            _materialize_fast_runtime_configs(dest_dir)
         label = spec["label"]
+        already_cached = _is_spec_cached(dest_dir, spec)
+
+        if spec.get("sources"):
+            if already_cached:
+                console.print(f"[dim]{label}[/dim] - [green]already cached[/green] ({dest_dir})")
+                continue
+            console.print(f"Downloading [cyan]{label}[/cyan] - this may take a while ...")
+            try:
+                for source in spec["sources"]:
+                    if source.get("filename") is not None:
+                        hf_hub_download(
+                            repo_id=source["repo_id"],
+                            filename=source["filename"],
+                            local_dir=str(dest_dir),
+                        )
+                    else:
+                        snapshot_kwargs = {
+                            "repo_id": source["repo_id"],
+                            "local_dir": str(dest_dir),
+                        }
+                        if source.get("allow_patterns") is not None:
+                            snapshot_kwargs["allow_patterns"] = source["allow_patterns"]
+                        snapshot_download(**snapshot_kwargs)
+                console.print(f"  [green]ok[/green] Saved to {dest_dir}")
+            except Exception as exc:
+                console.print(f"  [red]Failed:[/red] {exc}")
+                raise typer.Exit(code=1)
+            continue
 
         if spec["filename"] is not None:
             dest_file = dest_dir / spec["filename"]
             if dest_file.exists() and dest_file.stat().st_size > 0:
-                console.print(f"[dim]{label}[/dim] — [green]already cached[/green] ({dest_file})")
+                console.print(f"[dim]{label}[/dim] - [green]already cached[/green] ({dest_file})")
                 continue
-            console.print(f"Downloading [cyan]{label}[/cyan] …")
+            console.print(f"Downloading [cyan]{label}[/cyan] ...")
             try:
                 hf_hub_download(
                     repo_id=spec["repo_id"],
                     filename=spec["filename"],
                     local_dir=str(dest_dir),
                 )
-                console.print(f"  [green]✓[/green] Saved to {dest_dir}")
+                console.print(f"  [green]ok[/green] Saved to {dest_dir}")
             except Exception as exc:
                 console.print(f"  [red]Failed:[/red] {exc}")
                 raise typer.Exit(code=1)
         else:
-            # Full repo snapshot
-            if any(dest_dir.iterdir()) if dest_dir.exists() else False:
-                console.print(f"[dim]{label}[/dim] — [green]already cached[/green] ({dest_dir})")
+            if already_cached:
+                console.print(f"[dim]{label}[/dim] - [green]already cached[/green] ({dest_dir})")
                 continue
-            console.print(f"Downloading [cyan]{label}[/cyan] — this may take a while …")
+            console.print(f"Downloading [cyan]{label}[/cyan] - this may take a while ...")
             try:
                 snapshot_download(
                     repo_id=spec["repo_id"],
                     local_dir=str(dest_dir),
                 )
-                console.print(f"  [green]✓[/green] Saved to {dest_dir}")
+                console.print(f"  [green]ok[/green] Saved to {dest_dir}")
             except Exception as exc:
                 console.print(f"  [red]Failed:[/red] {exc}")
                 raise typer.Exit(code=1)
@@ -279,7 +325,10 @@ def download(
     console.print("[green]Download complete.[/green]")
 
 
-# ── presets ───────────────────────────────────────────────────────────────────
+def _materialize_fast_runtime_configs(dest_dir: Path) -> None:
+    from .generate.wan_move import ensure_lightx2v_fast_configs
+
+    ensure_lightx2v_fast_configs(dest_dir)
 
 
 @app.command()
@@ -287,7 +336,7 @@ def presets(
     list_: bool = typer.Option(True, "--list", help="List all available presets."),
 ) -> None:
     """List available generation presets."""
-    toml_files = sorted(_PRESETS_DIR.glob("*.toml"))
+    toml_files = _list_preset_files()
     if not toml_files:
         console.print("[yellow]No presets found.[/yellow]")
         return
@@ -300,24 +349,21 @@ def presets(
     table.add_column("Density", justify="right")
     table.add_column("Description")
 
-    for f in toml_files:
+    for path in toml_files:
         try:
-            p = tomllib.loads(f.read_text(encoding="utf-8"))["preset"]
+            preset_data = tomllib.loads(path.read_text(encoding="utf-8"))["preset"]
             table.add_row(
-                p.get("name", f.stem),
-                p.get("backend", "—"),
-                p.get("resolution", "—"),
-                str(p.get("num_frames", "—")),
-                str(p.get("trajectory_density", "—")),
-                p.get("description", ""),
+                preset_data.get("name", path.stem),
+                preset_data.get("backend", "-"),
+                preset_data.get("resolution", "-"),
+                str(preset_data.get("num_frames", "-")),
+                str(preset_data.get("trajectory_density", "-")),
+                preset_data.get("description", ""),
             )
         except Exception:
-            table.add_row(f.stem, "—", "—", "—", "—", "[red]parse error[/red]")
+            table.add_row(path.stem, "-", "-", "-", "-", "[red]parse error[/red]")
 
     console.print(table)
-
-
-# ── benchmark ─────────────────────────────────────────────────────────────────
 
 
 @app.command()
@@ -327,7 +373,7 @@ def benchmark(
     """Print system and GPU diagnostics."""
     import platform
 
-    console.print(f"[bold]Motion Mirror[/bold] — system info")
+    console.print("[bold]Motion Mirror[/bold] - system info")
     console.print(f"  Python  : {sys.version.split()[0]}")
     console.print(f"  Platform: {platform.system()} {platform.release()}")
 
@@ -365,9 +411,6 @@ def benchmark(
         console.print("\n  Run with [cyan]--gpu-info[/cyan] to check VRAM.")
 
 
-# ── ui ────────────────────────────────────────────────────────────────────────
-
-
 @app.command()
 def ui(
     host: str = typer.Option("127.0.0.1", help="Host to bind the Gradio server."),
@@ -377,6 +420,6 @@ def ui(
     """Launch the Gradio web UI."""
     from .ui.app import create_app
 
-    console.print(f"[bold]Motion Mirror UI[/bold] — http://{host}:{port}")
+    console.print(f"[bold]Motion Mirror UI[/bold] - http://{host}:{port}")
     demo = create_app()
     demo.launch(server_name=host, server_port=port, share=share)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "motion-mirror"
-version = "0.1.0"
+version = "0.2a0"
 description = "Local-first motion transfer pipeline for animating a character image from a reference video."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -47,6 +47,10 @@ gpu-inference = [
   "ftfy",
   "Pillow",
 ]
+lightx2v = [
+  "lightx2v @ git+https://github.com/ModelTC/LightX2V.git",
+  "pyzmq>=26",
+]
 
 [project.scripts]
 motion-mirror = "motion_mirror.cli:app"
@@ -56,6 +60,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"motion_mirror" = ["presets/*.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

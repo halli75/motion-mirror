@@ -110,12 +110,19 @@ def test_trajectory_returns_trajectory_map(tmp_path):
 
 def test_trajectory_tracks_shape(tmp_path):
     density = 64
-    vid = _make_video(tmp_path / "motion.mp4", frames=5)
-    pose = _make_drifting_pose(num_frames=5)
+    frames = 5
+    vid = _make_video(tmp_path / "motion.mp4", frames=frames)
+    pose = _make_drifting_pose(num_frames=frames)
     seg = _make_segmentation(tmp_path)
-    cfg = _make_config(tmp_path)
+    cfg = MotionMirrorConfig(
+        project_root=tmp_path,
+        backend="mock",
+        device="cpu",
+        trajectory_density=density,
+        num_frames=frames,
+    )
     result = synthesize_trajectory(pose, seg, vid, cfg)
-    assert result.tracks.shape == (5, density, 2), result.tracks.shape
+    assert result.tracks.shape == (frames, density, 2), result.tracks.shape
 
 
 def test_trajectory_tracks_dtype(tmp_path):
@@ -142,7 +149,13 @@ def test_trajectory_flow_fields_shape(tmp_path):
     vid = _make_video(tmp_path / "motion.mp4", frames=frames, size=(64, 64))
     pose = _make_drifting_pose(num_frames=frames, frame_size=(64, 64))
     seg = _make_segmentation(tmp_path, size=(64, 64))
-    cfg = _make_config(tmp_path)
+    cfg = MotionMirrorConfig(
+        project_root=tmp_path,
+        backend="mock",
+        device="cpu",
+        trajectory_density=64,
+        num_frames=frames,
+    )
     result = synthesize_trajectory(pose, seg, vid, cfg)
     # flow_fields: (F-1, H, W, 2)
     assert result.flow_fields.shape[0] == frames - 1
@@ -194,7 +207,8 @@ def test_layer1_rightward_drift():
         frame_size=char_size,
         fps=24.0,
     )
-    M = _build_body_transform(kps, char_size, char_size)
+    char_mask = np.full((char_size[1], char_size[0]), 255, dtype=np.uint8)
+    M = _build_body_transform(kps, char_size, char_size, char_mask)
     tracks = _layer1_skeleton_tracks(kps, M, char_size)
 
     # x coordinate of the mean track should increase each frame
@@ -252,7 +266,8 @@ def test_body_transform_maps_to_char_space():
     kps[:, :17, 0] = 40.0
     kps[:, :17, 1] = 50.0
     kps[:, :17, 2] = 0.9
-    M = _build_body_transform(kps, ref_size, char_size)
+    char_mask = np.full((char_size[1], char_size[0]), 255, dtype=np.uint8)
+    M = _build_body_transform(kps, ref_size, char_size, char_mask)
     assert M.shape == (3, 3)
     # Transform a point and check it stays in reasonable range
     pt = np.array([[40.0, 50.0]], dtype=np.float32)

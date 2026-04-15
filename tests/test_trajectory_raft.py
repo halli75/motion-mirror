@@ -78,21 +78,22 @@ def test_flow_pair_raft_falls_back_when_unavailable():
                for w in caught), "Expected fallback warning"
 
 
-def test_flow_pair_raft_falls_back_on_runtime_error():
-    """A GPU runtime error during RAFT should also trigger Farneback fallback."""
+def test_flow_pair_raft_propagates_runtime_error():
+    """A GPU runtime error from RAFT (e.g. OOM) must propagate, not be swallowed.
+
+    Only ImportError (missing dependency) triggers the Farneback fallback;
+    real runtime faults should surface so they are not silently hidden.
+    """
     from motion_mirror.extract.trajectory import _compute_flow_pair
+    import pytest
     frames = _make_frames(2, (32, 32))
 
     with patch(
         "motion_mirror.extract.trajectory._compute_flow_raft",
         side_effect=RuntimeError("CUDA OOM"),
     ):
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            flow = _compute_flow_pair(frames[0], frames[1], estimator="raft")
-
-    assert flow.shape == (32, 32, 2)
-    assert len(caught) >= 1
+        with pytest.raises(RuntimeError, match="CUDA OOM"):
+            _compute_flow_pair(frames[0], frames[1], estimator="raft")
 
 
 # ── synthesize_trajectory with flow_estimator="raft" (mocked RAFT) ───────────

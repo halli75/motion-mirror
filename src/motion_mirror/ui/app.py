@@ -2,9 +2,52 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..config import MotionMirrorConfig
 
 
-def create_app(config=None):
+def _run_pipeline(
+    img_path: str | None,
+    vid_path: str | None,
+    backend: str,
+    resolution: str,
+    frames: int | float,
+    density: int | float,
+    device: str,
+) -> tuple[str | None, str]:
+    """Core pipeline execution logic, extracted for testability.
+
+    Returns (output_video_path_or_None, status_message).
+    """
+    from ..config import MotionMirrorConfig
+    from ..pipeline import MotionMirrorPipeline
+
+    if img_path is None or vid_path is None:
+        return None, "Error: provide both a character image and a motion video."
+
+    run_cfg = MotionMirrorConfig(
+        backend=backend,
+        resolution=resolution,
+        num_frames=int(frames),
+        trajectory_density=int(density),
+        device=device,
+    )
+    try:
+        result = MotionMirrorPipeline(run_cfg).run(
+            Path(img_path), Path(vid_path)
+        )
+        return str(result.output_path), f"Done. Output: {result.output_path}"
+    except FileNotFoundError as exc:
+        return None, f"Error: {exc}"
+    except NotImplementedError as exc:
+        return None, f"Not implemented: {exc}"
+    except Exception as exc:
+        return None, f"Pipeline error: {exc}"
+
+
+def create_app(config: "MotionMirrorConfig | None" = None):
     """Build and return the Gradio Blocks demo.
 
     Parameters
@@ -16,32 +59,8 @@ def create_app(config=None):
     import gradio as gr
 
     from ..config import MotionMirrorConfig
-    from ..pipeline import MotionMirrorPipeline
 
     cfg_defaults = config or MotionMirrorConfig()
-
-    def on_run(img_path, vid_path, backend, resolution, frames, density, device):
-        if img_path is None or vid_path is None:
-            return None, "Error: provide both a character image and a motion video."
-
-        run_cfg = MotionMirrorConfig(
-            backend=backend,
-            resolution=resolution,
-            num_frames=int(frames),
-            trajectory_density=int(density),
-            device=device,
-        )
-        try:
-            result = MotionMirrorPipeline(run_cfg).run(
-                Path(img_path), Path(vid_path)
-            )
-            return str(result.output_path), f"Done. Output: {result.output_path}"
-        except FileNotFoundError as exc:
-            return None, f"Error: {exc}"
-        except NotImplementedError as exc:
-            return None, f"Not implemented: {exc}"
-        except Exception as exc:
-            return None, f"Pipeline error: {exc}"
 
     with gr.Blocks(title="Motion Mirror") as demo:
         gr.Markdown(
@@ -79,7 +98,7 @@ def create_app(config=None):
         with gr.Accordion("Advanced Settings", open=False):
             with gr.Row():
                 backend_dd = gr.Dropdown(
-                    choices=["wan-move-14b", "controlnet", "mock"],
+                    choices=["auto", "wan-move-14b", "wan-move-fast", "wan-1.3b-vace", "mock"],
                     value=cfg_defaults.backend,
                     label="Backend",
                 )
@@ -112,7 +131,7 @@ def create_app(config=None):
         run_btn = gr.Button("Generate", variant="primary")
 
         run_btn.click(
-            fn=on_run,
+            fn=_run_pipeline,
             inputs=[
                 char_image,
                 motion_video,

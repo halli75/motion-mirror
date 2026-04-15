@@ -14,12 +14,12 @@ class MotionMirrorConfig:
     trajectory_density: int = 512  # 512 = default, 1024 = HQ
 
     # Generation backend
-    # "auto"          — detect VRAM at runtime and pick the best option
-    # "wan-move-14b"  — 14B I2V, ~22 GB VRAM (sequential CPU offload)
-    # "wan-move-fast" — 14B LightX2V 4-step distilled, ~22 GB VRAM, ~5x faster
-    # "wan-1.3b-vace" — 1.3B VACE, ~8 GB VRAM (recommended for consumer GPUs)
-    # "controlnet"    — deprecated alias for "wan-1.3b-vace"
-    # "mock"          — solid-colour video, no GPU required
+    # "auto"          - detect VRAM at runtime and pick the best option
+    # "wan-move-14b"  - 14B I2V, ~24 GB VRAM
+    # "wan-move-fast" - true LightX2V 4-step Wan2.1 I2V fast backend
+    # "wan-1.3b-vace" - 1.3B VACE, ~8 GB VRAM
+    # "controlnet"    - deprecated alias for "wan-1.3b-vace"
+    # "mock"          - solid-colour video, no GPU required
     backend: Literal[
         "auto",
         "wan-move-14b",
@@ -33,9 +33,9 @@ class MotionMirrorConfig:
     num_frames: int = 81         # 81 frames = ~5 s at 16 fps
     device: str = "cuda"         # "cuda" | "cpu"
 
-    # VRAM optimisation flags (v0.2a)
-    offload_model: bool = False  # sequential layer-by-layer CPU offload (saves VRAM, slower)
-    t5_cpu: bool = False         # keep T5 text encoder on CPU (~12 GB VRAM saved)
+    # VRAM optimization flags (v0.2a)
+    offload_model: bool = False  # sequential layer-by-layer CPU offload
+    t5_cpu: bool = False         # keep T5 text encoder on CPU when supported
 
     # Optional stage upgrades (v0.2a)
     flow_estimator: Literal["farneback", "raft"] = "farneback"
@@ -45,6 +45,28 @@ class MotionMirrorConfig:
     cache_dir: Path = field(
         default_factory=lambda: Path.home() / ".cache" / "motion-mirror"
     )
+
+    def __post_init__(self) -> None:
+        """Validate configuration values at construction time."""
+        try:
+            w_str, h_str = self.resolution.split("x")
+            w, h = int(w_str), int(h_str)
+            if w < 1 or h < 1:
+                raise ValueError("dimensions must be positive")
+        except (ValueError, AttributeError) as exc:
+            raise ValueError(
+                f"Invalid resolution {self.resolution!r}. "
+                "Expected 'WxH' format with positive integers, e.g. '832x480'."
+            ) from exc
+
+        if self.trajectory_density < 1:
+            raise ValueError(
+                f"trajectory_density must be >= 1, got {self.trajectory_density}"
+            )
+        if self.num_frames < 1:
+            raise ValueError(
+                f"num_frames must be >= 1, got {self.num_frames}"
+            )
 
     @property
     def output_dir(self) -> Path:

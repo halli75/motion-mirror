@@ -1,0 +1,8 @@
+[preset]
+name = "default"
+description = "Standard quality — 832x480, 81 frames, density 512"
+backend = "wan-move-14b"
+resolution = "832x480"
+num_frames = 81
+trajectory_density = 512
+device = "cuda"

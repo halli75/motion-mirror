@@ -28,8 +28,8 @@ the optical-flow step.
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
@@ -97,8 +97,7 @@ def synthesize_trajectory(
     cfg = config or MotionMirrorConfig()
     density = cfg.trajectory_density
 
-    char_w, char_h = segmentation.mask.shape[1], segmentation.mask.shape[0]
-    char_size = (char_w, char_h)
+    char_size = (segmentation.mask.shape[1], segmentation.mask.shape[0])  # (W, H)
 
     # --- Load video frames --------------------------------------------------
     frames = _load_frames(motion_video_path)
@@ -116,16 +115,45 @@ def synthesize_trajectory(
     frames = frames[:num_frames]
     kps = kps[:num_frames]
 
+    # --- Temporal resampling to cfg.num_frames --------------------------------
+    # Map however many source frames we have onto the target output length.
+    target_frames = cfg.num_frames
+    if target_frames > 0 and num_frames != target_frames:
+        indices = np.linspace(0, num_frames - 1, target_frames).round().astype(np.int32)
+        frames = [frames[i] for i in indices]
+        kps = kps[indices]
+        num_frames = target_frames
+
+    # --- Build video-space body mask from frame-0 pose keypoints -------------
+    # Camera stabilization and Layer-3 seed selection must operate in the
+    # reference video's coordinate space, not the character image space.
+    # We derive the mask from pose keypoints so it is always correctly sized.
+    fh, fw = frames[0].shape[:2]
+    video_body_mask = _build_video_body_mask(kps[0], (fh, fw))
+
     # --- Camera motion compensation ----------------------------------------
-    stabilized_frames, _ = _compensate_camera_motion(frames, segmentation.mask)
+    stabilized_frames, homographies = _compensate_camera_motion(frames, video_body_mask)
+
+    # Warn if very few frames were successfully stabilized
+    valid_h_count = sum(1 for h in homographies[1:] if h is not None)
+    total_pairs = num_frames - 1
+    if total_pairs > 1 and valid_h_count < total_pairs // 2:
+        warnings.warn(
+            f"Camera stabilization: only {valid_h_count}/{total_pairs} frames "
+            "stabilized (insufficient background features). "
+            "Trajectory quality may be degraded for non-static cameras.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     # --- Coordinate transform: reference video → character image space ------
     body_transform = _build_body_transform(
-        kps, pose_seq.frame_size, char_size
+        kps, pose_seq.frame_size, char_size, segmentation.mask
     )
 
     # --- Layer 1: skeleton keypoint tracks ----------------------------------
     layer1 = _layer1_skeleton_tracks(kps, body_transform, char_size)
+    n1 = layer1.shape[1]  # skeleton anchor count — always preserved in final mix
     # layer1: (F, N1, 2) normalised [0,1]
 
     # --- Layer 2: Gaussian-falloff interpolated tracks ----------------------
@@ -135,7 +163,7 @@ def synthesize_trajectory(
     # --- Layer 3: optical-flow tracks for non-rigid regions -----------------
     layer3, flow_fields = _layer3_flow_tracks(
         stabilized_frames,
-        segmentation.mask,
+        video_body_mask,
         body_transform,
         char_size,
         density,
@@ -144,22 +172,30 @@ def synthesize_trajectory(
     )
     # layer3: (F, N3, 2), flow_fields: (F-1, H, W, 2)
 
-    # --- Compose layers and subsample to exactly `density` tracks -----------
-    all_tracks = np.concatenate([layer1, layer2, layer3], axis=1)  # (F, N, 2)
+    # --- Compose layers; always preserve Layer-1 skeleton anchors -----------
+    # Layer-1 tracks are the spec's "scaffold" — they must survive subsampling.
+    other_tracks = np.concatenate([layer2, layer3], axis=1)  # (F, N2+N3, 2)
+    total_others = other_tracks.shape[1]
+    remaining_budget = density - n1
 
-    if all_tracks.shape[1] > density:
+    if remaining_budget <= 0:
+        # More skeleton anchors than density budget — keep first `density` only.
+        all_tracks = layer1[:, :density, :]
+    elif total_others <= remaining_budget:
+        # All layers fit within density; pad if still short.
+        all_tracks = np.concatenate([layer1, other_tracks], axis=1)
+        if all_tracks.shape[1] < density:
+            shortage = density - all_tracks.shape[1]
+            rng = np.random.default_rng(1)
+            pad_idx = rng.choice(all_tracks.shape[1], shortage, replace=True)
+            jitter = rng.normal(0, 0.001, (num_frames, shortage, 2)).astype(np.float32)
+            pad = np.clip(all_tracks[:, pad_idx, :] + jitter, 0.0, 1.0)
+            all_tracks = np.concatenate([all_tracks, pad], axis=1)
+    else:
+        # Fill remaining budget by randomly sampling from Layer-2+3.
         rng = np.random.default_rng(0)
-        idx = rng.choice(all_tracks.shape[1], density, replace=False)
-        all_tracks = all_tracks[:, idx, :]
-    elif all_tracks.shape[1] < density:
-        # Pad by repeating existing tracks with small jitter
-        shortage = density - all_tracks.shape[1]
-        rng = np.random.default_rng(1)
-        pad_idx = rng.choice(all_tracks.shape[1], shortage, replace=True)
-        jitter = rng.normal(0, 0.001, (num_frames, shortage, 2)).astype(np.float32)
-        pad = all_tracks[:, pad_idx, :] + jitter
-        pad = np.clip(pad, 0.0, 1.0)
-        all_tracks = np.concatenate([all_tracks, pad], axis=1)
+        idx = rng.choice(total_others, remaining_budget, replace=False)
+        all_tracks = np.concatenate([layer1, other_tracks[:, idx, :]], axis=1)
 
     all_tracks = np.clip(all_tracks, 0.0, 1.0).astype(np.float32)
 
@@ -190,6 +226,40 @@ def _load_frames(video_path: Path) -> list[np.ndarray]:
 def _dilate_mask(mask: np.ndarray, px: int) -> np.ndarray:
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (px * 2 + 1, px * 2 + 1))
     return cv2.dilate(mask, kernel)
+
+
+def _build_video_body_mask(
+    keypoints_f0: np.ndarray,  # (133, 3)
+    frame_hw: tuple[int, int],  # (H, W)
+) -> np.ndarray:
+    """Build a body bounding-box mask in video-frame pixel space from frame-0 pose.
+
+    Uses COCO body keypoints (indices 0–16) to locate the person, adds a ~10%
+    margin around the detected bounding box. Falls back to the centre-60% region
+    if no confident keypoints are found.
+
+    This mask should be used for camera stabilization and Layer-3 seed selection
+    so that those operations work in the correct (video-frame) coordinate space.
+    """
+    h, w = frame_hw
+    mask = np.zeros((h, w), dtype=np.uint8)
+
+    body_kps = keypoints_f0[_BODY_KP_INDICES]  # (17, 3)
+    valid = body_kps[body_kps[:, 2] > 0.3]
+
+    if len(valid) >= 2:
+        margin_x = max(int(w * 0.10), 5)
+        margin_y = max(int(h * 0.10), 5)
+        x1 = max(0, int(valid[:, 0].min()) - margin_x)
+        y1 = max(0, int(valid[:, 1].min()) - margin_y)
+        x2 = min(w, int(valid[:, 0].max()) + margin_x)
+        y2 = min(h, int(valid[:, 1].max()) + margin_y)
+        mask[y1:y2, x1:x2] = 255
+    else:
+        # No confident body keypoints: mark the centre 60% as foreground.
+        mask[h // 5: 4 * h // 5, w // 5: 4 * w // 5] = 255
+
+    return mask
 
 
 def _compensate_camera_motion(
@@ -244,12 +314,15 @@ def _build_body_transform(
     keypoints: np.ndarray,
     ref_frame_size: tuple[int, int],
     char_image_size: tuple[int, int],
+    char_mask: np.ndarray,
 ) -> np.ndarray:
-    """Build a 3×3 similarity transform (scale + translate) mapping reference
-    body bounding box → character-image body bounding box.
+    """Build a 3×3 similarity transform (uniform scale + translate) mapping
+    reference body bounding box → character-image body bounding box.
 
-    If no confident keypoints are found, returns an identity-like transform
-    scaled to fit the frame.
+    Uses the actual character segmentation mask to determine the target body
+    region, and a single uniform scale factor to preserve aspect ratio (as
+    specified in the design doc).  Falls back gracefully when keypoints or
+    mask data are sparse.
     """
     ref_w, ref_h = ref_frame_size
     char_w, char_h = char_image_size
@@ -257,39 +330,47 @@ def _build_body_transform(
     # Gather confident body keypoints across all frames
     body_kps = keypoints[:, _BODY_KP_INDICES, :]  # (F, 17, 3)
     conf = body_kps[:, :, 2]
-    mask = conf > 0.3  # (F, 17)
+    valid_mask = conf > 0.3  # (F, 17)
 
-    if mask.sum() < 2:
-        # Fallback: scale entire frame to char image size
-        sx = char_w / ref_w
-        sy = char_h / ref_h
-        M = np.array([[sx, 0, 0], [0, sy, 0], [0, 0, 1]], dtype=np.float64)
-        return M
+    if valid_mask.sum() < 2:
+        # Fallback: scale entire frame to char image, centred
+        scale = min(char_w / max(ref_w, 1), char_h / max(ref_h, 1))
+        tx = (char_w - ref_w * scale) / 2
+        ty = (char_h - ref_h * scale) / 2
+        return np.array([[scale, 0, tx], [0, scale, ty], [0, 0, 1]], dtype=np.float64)
 
-    xs = body_kps[:, :, 0][mask]
-    ys = body_kps[:, :, 1][mask]
+    xs = body_kps[:, :, 0][valid_mask]
+    ys = body_kps[:, :, 1][valid_mask]
 
     ref_x1, ref_x2 = xs.min(), xs.max()
     ref_y1, ref_y2 = ys.min(), ys.max()
-
     ref_bw = max(ref_x2 - ref_x1, 1.0)
     ref_bh = max(ref_y2 - ref_y1, 1.0)
+    ref_cx = (ref_x1 + ref_x2) / 2
+    ref_cy = (ref_y1 + ref_y2) / 2
 
-    # Character image body bbox: use 80% of image centred
-    char_margin_x = char_w * 0.1
-    char_margin_y = char_h * 0.1
-    char_x1 = char_margin_x
-    char_y1 = char_margin_y
-    char_bw = char_w - 2 * char_margin_x
-    char_bh = char_h - 2 * char_margin_y
+    # Character body bounds from the segmentation mask bounding box
+    char_ys, char_xs = np.where(char_mask > 127)
+    if len(char_ys) >= 2:
+        c_x1, c_x2 = int(char_xs.min()), int(char_xs.max())
+        c_y1, c_y2 = int(char_ys.min()), int(char_ys.max())
+        char_bw = max(c_x2 - c_x1, 1)
+        char_bh = max(c_y2 - c_y1, 1)
+        char_cx = (c_x1 + c_x2) / 2.0
+        char_cy = (c_y1 + c_y2) / 2.0
+    else:
+        # Fallback: 80% centred region
+        char_cx = char_w / 2.0
+        char_cy = char_h / 2.0
+        char_bw = char_w * 0.8
+        char_bh = char_h * 0.8
 
-    sx = char_bw / ref_bw
-    sy = char_bh / ref_bh
-    tx = char_x1 - ref_x1 * sx
-    ty = char_y1 - ref_y1 * sy
+    # Uniform scale: use the smaller of the two axis ratios to avoid clipping
+    scale = min(char_bw / ref_bw, char_bh / ref_bh)
+    tx = char_cx - ref_cx * scale
+    ty = char_cy - ref_cy * scale
 
-    M = np.array([[sx, 0, tx], [0, sy, ty], [0, 0, 1]], dtype=np.float64)
-    return M
+    return np.array([[scale, 0, tx], [0, scale, ty], [0, 0, 1]], dtype=np.float64)
 
 
 def _apply_transform_to_points(
@@ -338,7 +419,14 @@ def _layer2_interpolated_tracks(
     mask: np.ndarray,             # (H, W) uint8
     density: int,
 ) -> np.ndarray:
-    """Return (F, N2, 2) normalised tracks via Gaussian-falloff interpolation."""
+    """Return (F, N2, 2) normalised tracks via Gaussian-falloff interpolation.
+
+    Vectorized: computes weighted displacements for all seed points in one
+    NumPy operation per frame instead of iterating over individual seeds.
+    Seeds are positioned inside the character segmentation mask; their motion
+    is a Gaussian-weighted sum of Layer-1 displacements (σ=0.15 in normalised
+    space), so they follow skeleton tracks with strength proportional to proximity.
+    """
     num_frames, n1, _ = layer1_tracks.shape
     n2 = density // 2
 
@@ -353,30 +441,30 @@ def _layer2_interpolated_tracks(
     seed_x = xs[idx].astype(np.float32) / w  # normalised [0,1]
     seed_y = ys[idx].astype(np.float32) / h
     seeds = np.stack([seed_x, seed_y], axis=1)  # (n2, 2)
-
     actual_n2 = seeds.shape[0]
 
-    # Displacements from frame-0 anchor
+    # Frame-0 Layer-1 positions used as displacement anchors
     anchor = layer1_tracks[0]  # (N1, 2)
+
+    # Pre-compute per-seed Gaussian weights once (they depend only on seed positions)
+    # diff[i, j] = anchor[j] - seeds[i]  →  shape (actual_n2, N1, 2)
+    diff = anchor[np.newaxis, :, :] - seeds[:, np.newaxis, :]
+    dist2 = (diff ** 2).sum(axis=2)                                # (actual_n2, N1)
+    weights = np.exp(-dist2 / (2 * _GAUSSIAN_SIGMA ** 2))         # (actual_n2, N1)
+    w_sum = weights.sum(axis=1, keepdims=True)                     # (actual_n2, 1)
+    no_influence = (w_sum.squeeze(1) < 1e-12)                      # (actual_n2,)
+    safe_w_sum = np.where(w_sum < 1e-12, np.ones_like(w_sum), w_sum)
+    norm_weights = weights / safe_w_sum                            # (actual_n2, N1)
 
     tracks = np.zeros((num_frames, actual_n2, 2), dtype=np.float32)
     tracks[0] = seeds
 
     for f in range(1, num_frames):
-        delta = layer1_tracks[f] - anchor  # (N1, 2)
-        for i in range(actual_n2):
-            p = seeds[i]  # (2,)
-            # Gaussian weight from seed to each Layer-1 anchor
-            diff = anchor - p[np.newaxis, :]  # (N1, 2)
-            dist2 = (diff ** 2).sum(axis=1)   # (N1,)
-            weights = np.exp(-dist2 / (2 * _GAUSSIAN_SIGMA ** 2))
-            w_sum = weights.sum()
-            if w_sum < 1e-12:
-                tracks[f, i] = p
-            else:
-                weights /= w_sum
-                displacement = (weights[:, np.newaxis] * delta).sum(axis=0)
-                tracks[f, i] = np.clip(p + displacement, 0.0, 1.0)
+        delta = layer1_tracks[f] - anchor  # (N1, 2) frame displacement
+        # displacement[i] = Σ_j norm_weights[i,j] * delta[j]
+        displacement = (norm_weights[:, :, np.newaxis] * delta[np.newaxis, :, :]).sum(axis=1)
+        displacement[no_influence] = 0.0
+        tracks[f] = np.clip(seeds + displacement, 0.0, 1.0)
 
     return tracks.astype(np.float32)
 
@@ -468,8 +556,8 @@ def _compute_flow_pair(
         Target frame (BGR uint8).
     estimator:
         ``"farneback"`` (CPU, always available) or ``"raft"`` (GPU preferred,
-        requires torchvision).  Falls back to Farneback with a warning if RAFT
-        cannot be loaded.
+        requires torchvision).  Falls back to Farneback only on ImportError
+        (missing dependency) — runtime errors from RAFT are propagated.
     device:
         Torch device string, used only for RAFT.
 
@@ -481,10 +569,9 @@ def _compute_flow_pair(
     if estimator == "raft":
         try:
             return _compute_flow_raft(frame0_bgr, framek_bgr, device=device)
-        except (ImportError, Exception) as exc:
-            import warnings
+        except ImportError as exc:
             warnings.warn(
-                f"RAFT flow estimation failed ({exc}); falling back to Farneback.",
+                f"RAFT flow estimation unavailable ({exc}); falling back to Farneback.",
                 UserWarning,
                 stacklevel=4,
             )
@@ -493,7 +580,7 @@ def _compute_flow_pair(
 
 def _layer3_flow_tracks(
     stabilized_frames: list[np.ndarray],  # list of (H, W, 3) BGR
-    subject_mask: np.ndarray,             # (H, W) uint8
+    subject_mask: np.ndarray,             # (H, W) uint8 — in video frame space
     body_transform: np.ndarray,           # 3x3
     char_size: tuple[int, int],
     density: int,
@@ -503,9 +590,9 @@ def _layer3_flow_tracks(
     """Return ((F, N3, 2), (F-1, H, W, 2)) optical-flow tracks for non-rigid regions.
 
     Flow is computed frame-0 → frame-k directly (never chained).
+    ``subject_mask`` must be in video-frame pixel space (same size as the frames).
     """
     num_frames = len(stabilized_frames)
-    char_w, char_h = char_size
     n3 = density // 4
 
     fh, fw = stabilized_frames[0].shape[:2]

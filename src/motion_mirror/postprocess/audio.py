@@ -61,7 +61,8 @@ def passthrough_audio(
         probe = ffmpeg.probe(str(source_video_path))
     except ffmpeg.Error as exc:
         raise RuntimeError(
-            f"ffmpeg probe failed on {source_video_path}: {exc.stderr}"
+            f"ffmpeg probe failed on {source_video_path}: "
+            f"{exc.stderr.decode(errors='replace') if exc.stderr else exc}"
         ) from exc
 
     has_audio = any(

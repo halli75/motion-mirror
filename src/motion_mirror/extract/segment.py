@@ -158,11 +158,11 @@ def _segment_sam2(
     --------
     pip install git+https://github.com/facebookresearch/sam2.git
     """
-    import torch  # type: ignore[import]
     from PIL import Image
 
     device = cfg.device if cfg.device == "cuda" and _cuda_available() else "cpu"
     predictor = _get_sam2_predictor(device)
+    import torch  # type: ignore[import]  # only needed for inference context
 
     pil_img = Image.open(image_path).convert("RGB")
     img_np = np.array(pil_img, dtype=np.uint8)       # (H, W, 3) RGB

@@ -5,6 +5,7 @@ The run command is tested with --backend mock so no GPU or weights needed.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import cv2
@@ -15,11 +16,17 @@ from typer.testing import CliRunner
 from motion_mirror.cli import app
 
 runner = CliRunner()
+_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def _ascii(s: str) -> str:
     """Strip non-ASCII so Windows cp1252 terminal encoding doesn't break assertions."""
     return s.encode("ascii", errors="replace").decode("ascii")
+
+
+def _plain(s: str) -> str:
+    """Normalize Rich/Typer help output before substring assertions."""
+    return _ascii(_ANSI_RE.sub("", s))
 
 
 def _make_image(path: Path, size: tuple[int, int] = (64, 64)) -> Path:
@@ -51,7 +58,7 @@ def test_help_lists_all_commands():
 def test_run_help_documents_v02a_public_surface():
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
-    out = _ascii(result.output)
+    out = _plain(result.output)
     for text in (
         "wan-move-gguf",
         "wan-move-fast",

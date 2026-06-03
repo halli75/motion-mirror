@@ -159,6 +159,183 @@ def test_wan_move_real_path_requires_weights(tmp_path):
         generate_with_wan_move(req, cfg)
 
 
+def test_wan_move_gguf_request_backend_routes(tmp_path):
+    req = _mock_request(tmp_path)
+    req.backend = "wan-move-gguf"
+    cfg = MotionMirrorConfig(project_root=tmp_path, backend="wan-move-14b", device="cpu")
+    expected = GenerationResult(
+        video_path=req.output_path,
+        backend="wan-move-gguf",
+        resolution=req.resolution,
+        num_frames=req.frames,
+    )
+
+    with patch("motion_mirror.generate.wan_move._generate_gguf", return_value=expected) as gguf_mock:
+        result = generate_with_wan_move(req, cfg)
+
+    assert result is expected
+    gguf_mock.assert_called_once()
+
+
+def test_wan_move_gguf_requires_transformer_asset(tmp_path):
+    seg = tmp_path / "seg.png"
+    traj = tmp_path / "traj.npz"
+    Image.new("RGBA", (32, 32), (255, 255, 255, 255)).save(seg)
+    _write_traj_npz(traj)
+
+    req = GenerationRequest(
+        segmented_image_path=seg,
+        trajectory_map_path=traj,
+        output_path=tmp_path / "gguf.mp4",
+        backend="wan-move-gguf",
+        resolution="128x64",
+        frames=4,
+        device="cpu",
+    )
+    cfg = MotionMirrorConfig(
+        project_root=tmp_path,
+        cache_dir=tmp_path / "cache",
+        backend="wan-move-gguf",
+        device="cpu",
+    )
+
+    with pytest.raises(FileNotFoundError, match="GGUF|gguf"):
+        generate_with_wan_move(req, cfg)
+
+
+def test_wan_move_gguf_calls_diffusers_model_level_loader(tmp_path):
+    seg = tmp_path / "seg.png"
+    traj = tmp_path / "traj.npz"
+    Image.new("RGBA", (48, 48), (255, 100, 10, 255)).save(seg)
+    _write_traj_npz(traj, density=64)
+
+    cfg = MotionMirrorConfig(
+        project_root=tmp_path,
+        cache_dir=tmp_path / "cache",
+        backend="wan-move-gguf",
+        device="cpu",
+        t5_cpu=True,
+    )
+    model_dir = cfg.model_cache("wan-move-gguf")
+    gguf_path = model_dir / "wan2.1-i2v-14b-480p-Q4_K_M.gguf"
+    gguf_path.write_bytes(b"fake-gguf")
+
+    req = GenerationRequest(
+        segmented_image_path=seg,
+        trajectory_map_path=traj,
+        output_path=tmp_path / "gguf.mp4",
+        backend="wan-move-gguf",
+        resolution="128x64",
+        frames=4,
+        device="cpu",
+        seed=17,
+    )
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.bfloat16 = "bfloat16"
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False, empty_cache=lambda: None)
+
+    class FakeGenerator:
+        def __init__(self, device: str) -> None:
+            self.device = device
+            self.seed = None
+
+        def manual_seed(self, seed: int):
+            self.seed = seed
+            return self
+
+    fake_torch.Generator = lambda device: FakeGenerator(device)
+
+    class FakeGGUFQuantizationConfig:
+        def __init__(self, compute_dtype) -> None:
+            self.compute_dtype = compute_dtype
+
+    class FakeWanTransformer3DModel:
+        last_args = None
+        last_instance = None
+
+        def __init__(self) -> None:
+            self.config = types.SimpleNamespace(patch_size=(1, 2))
+            FakeWanTransformer3DModel.last_instance = self
+
+        @classmethod
+        def from_single_file(cls, *args, **kwargs):
+            cls.last_args = (args, kwargs)
+            return cls()
+
+    class FakeTextEncoder:
+        def __init__(self) -> None:
+            self.device = None
+
+        def to(self, device: str):
+            self.device = device
+            return self
+
+    class FakePipe:
+        last_instance = None
+
+        def __init__(self, transformer) -> None:
+            self.transformer = transformer
+            self.vae_scale_factor_spatial = 8
+            self.text_encoder = FakeTextEncoder()
+            self.device = None
+            self.attention_slicing = None
+            self.calls = []
+            FakePipe.last_instance = self
+
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            inst = cls(kwargs["transformer"])
+            inst.pretrained_args = (args, kwargs)
+            return inst
+
+        def enable_attention_slicing(self, value):
+            self.attention_slicing = value
+
+        def to(self, device: str):
+            self.device = device
+            return self
+
+        def __call__(self, **kwargs):
+            self.calls.append(kwargs)
+            frames = [
+                np.zeros((kwargs["height"], kwargs["width"], 3), dtype=np.float32)
+                for _ in range(kwargs["num_frames"])
+            ]
+            return types.SimpleNamespace(frames=[frames])
+
+    fake_diffusers = types.ModuleType("diffusers")
+    fake_diffusers.GGUFQuantizationConfig = FakeGGUFQuantizationConfig
+    fake_diffusers.WanTransformer3DModel = FakeWanTransformer3DModel
+    fake_diffusers.WanImageToVideoPipeline = FakePipe
+
+    with patch_sys_modules({"torch": fake_torch, "diffusers": fake_diffusers}):
+        result = generate_with_wan_move(req, cfg)
+
+    assert result.backend == "wan-move-gguf"
+    assert result.video_path.exists()
+    assert FakeWanTransformer3DModel.last_args is not None
+    transformer_args, transformer_kwargs = FakeWanTransformer3DModel.last_args
+    assert transformer_args == (str(gguf_path),)
+    assert transformer_kwargs["config"] == "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
+    assert transformer_kwargs["subfolder"] == "transformer"
+    assert transformer_kwargs["torch_dtype"] == "bfloat16"
+    assert transformer_kwargs["quantization_config"].compute_dtype == "bfloat16"
+    assert FakePipe.last_instance is not None
+    pipe = FakePipe.last_instance
+    pipe_args, pipe_kwargs = pipe.pretrained_args
+    assert pipe_args == ("Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",)
+    assert pipe_kwargs["transformer"] is FakeWanTransformer3DModel.last_instance
+    assert pipe_kwargs["torch_dtype"] == "bfloat16"
+    assert pipe.device == "cpu"
+    assert pipe.text_encoder.device == "cpu"
+    assert pipe.attention_slicing == 1
+    call = pipe.calls[0]
+    assert call["num_frames"] == 4
+    assert call["generator"].device == "cpu"
+    assert call["generator"].seed == 17
+
+
 def test_wan_move_fast_requires_fast_assets(tmp_path):
     seg = tmp_path / "seg.png"
     traj = tmp_path / "traj.npz"

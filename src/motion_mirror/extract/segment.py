@@ -12,6 +12,7 @@ The active backend is controlled by ``MotionMirrorConfig.segmenter``.
 from __future__ import annotations
 
 import warnings
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
@@ -162,7 +163,6 @@ def _segment_sam2(
 
     device = cfg.device if cfg.device == "cuda" and _cuda_available() else "cpu"
     predictor = _get_sam2_predictor(device)
-    import torch  # type: ignore[import]  # only needed for inference context
 
     pil_img = Image.open(image_path).convert("RGB")
     img_np = np.array(pil_img, dtype=np.uint8)       # (H, W, 3) RGB
@@ -173,13 +173,16 @@ def _segment_sam2(
     point_coords = np.array([[cx, cy]], dtype=np.float32)
     point_labels = np.array([1], dtype=np.int32)      # 1 = foreground
 
-    inference_ctx = (
-        torch.autocast("cuda", dtype=torch.bfloat16)
-        if device == "cuda"
-        else torch.inference_mode()
-    )
+    if device == "cuda":
+        import torch  # type: ignore[import]  # only needed for CUDA inference context
 
-    with torch.inference_mode(), inference_ctx:
+        outer_ctx = torch.inference_mode()
+        inference_ctx = torch.autocast("cuda", dtype=torch.bfloat16)
+    else:
+        outer_ctx = nullcontext()
+        inference_ctx = nullcontext()
+
+    with outer_ctx, inference_ctx:
         predictor.set_image(img_np)
         masks, scores, _ = predictor.predict(
             point_coords=point_coords,

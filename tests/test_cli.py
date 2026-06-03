@@ -48,6 +48,24 @@ def test_help_lists_all_commands():
         assert cmd in out, f"Command '{cmd}' missing from --help"
 
 
+def test_run_help_documents_v02a_public_surface():
+    result = runner.invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    out = _ascii(result.output)
+    for text in (
+        "wan-move-gguf",
+        "wan-move-fast",
+        "wan-1.3b-vace",
+        "--auto",
+        "--offload-model",
+        "--t5-cpu",
+        "--flow-estimator",
+        "--segmenter",
+        "--reference-masker",
+    ):
+        assert text in out
+
+
 # ── presets ───────────────────────────────────────────────────────────────────
 
 def test_presets_list_exit_zero():

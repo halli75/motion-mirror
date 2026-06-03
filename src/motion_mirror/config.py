@@ -4,6 +4,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+BackendName = Literal[
+    "auto",
+    "wan-move-14b",
+    "wan-move-fast",
+    "wan-move-gguf",
+    "wan-1.3b-vace",
+    "controlnet",
+    "mock",
+]
+
 
 @dataclass(slots=True)
 class MotionMirrorConfig:
@@ -17,17 +27,11 @@ class MotionMirrorConfig:
     # "auto"          - detect VRAM at runtime and pick the best option
     # "wan-move-14b"  - 14B I2V, ~24 GB VRAM
     # "wan-move-fast" - true LightX2V 4-step Wan2.1 I2V fast backend
+    # "wan-move-gguf" - experimental GGUF-quantized Wan transformer via Diffusers
     # "wan-1.3b-vace" - 1.3B VACE, ~8 GB VRAM
     # "controlnet"    - deprecated alias for "wan-1.3b-vace"
     # "mock"          - solid-colour video, no GPU required
-    backend: Literal[
-        "auto",
-        "wan-move-14b",
-        "wan-move-fast",
-        "wan-1.3b-vace",
-        "controlnet",
-        "mock",
-    ] = "wan-move-14b"
+    backend: BackendName = "wan-move-14b"
 
     resolution: str = "832x480"  # WxH string
     num_frames: int = 81         # 81 frames = ~5 s at 16 fps
@@ -40,6 +44,7 @@ class MotionMirrorConfig:
     # Optional stage upgrades (v0.2a)
     flow_estimator: Literal["farneback", "raft"] = "farneback"
     segmenter: Literal["rembg", "sam2"] = "rembg"
+    reference_masker: Literal["pose", "sam2"] = "pose"
 
     # Model cache
     cache_dir: Path = field(

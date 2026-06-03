@@ -76,7 +76,7 @@ license.
 ### torch / torchvision (optional — GPU path only)
 - **License:** BSD 3-Clause
 - **Source:** https://github.com/pytorch/pytorch / https://github.com/pytorch/vision
-- **Use:** Tensor operations and model inference
+- **Use:** Tensor operations, model inference, and optional RAFT optical flow
 
 ### onnxruntime / onnxruntime-gpu (optional — GPU path only)
 - **License:** MIT
@@ -88,6 +88,21 @@ license.
 - **Source:** https://github.com/Tau-J/rtmlib
 - **Use:** DWPose-L pose estimation wrapper
 
+### lightx2v (optional — v0.2a fast backend)
+- **License:** Apache 2.0
+- **Source:** https://github.com/ModelTC/LightX2V
+- **Use:** LightX2V runtime for `wan-move-fast` 4-step Wan2.1 inference
+
+### sam2 (optional — v0.2a segmentation/masking)
+- **License:** Apache 2.0
+- **Source:** https://github.com/facebookresearch/sam2
+- **Use:** SAM-2 character segmentation and optional reference-video masking
+
+### gguf (optional — v0.2a quantized backend)
+- **License:** MIT
+- **Source:** https://github.com/ggml-org/ggml
+- **Use:** Loading GGUF-quantized Wan transformer checkpoints through Diffusers
+
 ---
 
 ## Model Weights
@@ -96,7 +111,25 @@ license.
 - **License:** Apache 2.0
 - **Source:** https://huggingface.co/Wan-AI/Wan2.1-I2V-14B-720P-Diffusers
 - **Provider:** Alibaba / Wan-AI
-- **Use:** Image-to-video generation backbone
+- **Use:** Image-to-video generation backbone for `wan-move-14b`
+
+### Wan2.1-I2V-14B GGUF quantizations
+- **License:** Apache 2.0 inherited from upstream Wan2.1 weights unless a specific quantized checkpoint states otherwise
+- **Source:** https://huggingface.co/city96/Wan2.1-I2V-14B-480P-gguf
+- **Provider:** city96 / upstream Wan-AI
+- **Use:** Experimental GGUF-quantized transformer backend for `wan-move-gguf`
+
+### Wan2.1-I2V LightX2V distilled weights
+- **License:** Apache 2.0 inherited from upstream Wan2.1 / LightX2V release terms unless a specific checkpoint states otherwise
+- **Source:** https://huggingface.co/lightx2v/Wan2.1-Distill-Models
+- **Provider:** ModelTC / LightX2V
+- **Use:** Distilled 4-step I2V weights for `wan-move-fast`
+
+### Wan2.1-VACE-1.3B
+- **License:** Apache 2.0
+- **Source:** https://huggingface.co/Wan-AI/Wan2.1-VACE-1.3B-diffusers
+- **Provider:** Alibaba / Wan-AI
+- **Use:** Low-VRAM VACE generation backend for `wan-1.3b-vace`
 
 ### UMT5-XXL Text Encoder
 - **License:** Apache 2.0
@@ -128,6 +161,12 @@ license.
 - **License:** Apache 2.0
 - **Source:** https://github.com/xuebinqin/U-2-Net (weights distributed via rembg)
 - **Use:** Salient object detection for background removal
+
+### SAM-2 Hiera Large
+- **License:** Apache 2.0
+- **Source:** https://huggingface.co/facebook/sam2-hiera-large
+- **Provider:** Meta / Facebook Research
+- **Use:** Optional SAM-2 segmentation and reference masking via `--segmenter sam2` and `--reference-masker sam2`
 
 ---
 

@@ -77,7 +77,10 @@ def test_segment_sam2_dispatch_calls_predictor(tmp_path):
 
     mock_pred = _make_sam2_mock(64, 64)
 
-    with patch("motion_mirror.extract.segment._get_sam2_predictor", return_value=mock_pred):
+    with (
+        patch("motion_mirror.extract.segment._get_sam2_predictor", return_value=mock_pred),
+        patch.dict("sys.modules", {"torch": None}),
+    ):
         result = segment_subject(img, cfg)
 
     mock_pred.set_image.assert_called_once()

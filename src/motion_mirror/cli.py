@@ -43,10 +43,41 @@ def _load_preset(name: str) -> dict:
 
 
 def _is_spec_cached(dest_dir: Path, spec: dict) -> bool:
+    if not dest_dir.exists():
+        return False
+
     required_paths = spec.get("required_paths")
     if required_paths:
-        return all((dest_dir / rel_path).exists() for rel_path in required_paths)
-    return any(dest_dir.iterdir()) if dest_dir.exists() else False
+        if not all(_cache_path_complete(dest_dir / rel_path) for rel_path in required_paths):
+            return False
+
+    filename = spec.get("filename")
+    if filename is not None and not _cache_path_complete(dest_dir / filename):
+        return False
+
+    min_cached_bytes = spec.get("min_cached_bytes")
+    if min_cached_bytes is not None:
+        return _cache_size_bytes(dest_dir) >= int(min_cached_bytes)
+
+    if required_paths or filename is not None:
+        return True
+    return any(dest_dir.iterdir())
+
+
+def _cache_path_complete(path: Path) -> bool:
+    if path.is_file():
+        return path.stat().st_size > 0
+    if path.is_dir():
+        return any(path.iterdir())
+    return False
+
+
+def _cache_size_bytes(path: Path) -> int:
+    if path.is_file():
+        return path.stat().st_size
+    if not path.exists():
+        return 0
+    return sum(file.stat().st_size for file in path.rglob("*") if file.is_file())
 
 
 _MODEL_SPECS: dict[str, dict] = {
@@ -68,6 +99,7 @@ _MODEL_SPECS: dict[str, dict] = {
         "repo_id": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",
         "filename": None,
         "expected_bytes": 28_000_000_000,
+        "min_cached_bytes": 20_000_000_000,
         "cache_subdir": "wan-move",
         "label": "Wan2.1-I2V-14B-720P (diffusers format, ~28 GB) [backend: wan-move-14b]",
     },
@@ -75,6 +107,7 @@ _MODEL_SPECS: dict[str, dict] = {
         "repo_id": "city96/Wan2.1-I2V-14B-480P-gguf",
         "filename": "wan2.1-i2v-14b-480p-Q4_K_M.gguf",
         "expected_bytes": 12_000_000_000,
+        "min_cached_bytes": 6_000_000_000,
         "cache_subdir": "wan-move-gguf",
         "label": "Wan2.1-I2V-14B-480P GGUF Q4_K_M transformer (~12 GB) [backend: wan-move-gguf]",
         "required_paths": ["wan2.1-i2v-14b-480p-Q4_K_M.gguf"],
@@ -83,11 +116,13 @@ _MODEL_SPECS: dict[str, dict] = {
         "repo_id": "Wan-AI/Wan2.1-VACE-1.3B-diffusers",
         "filename": None,
         "expected_bytes": 5_000_000_000,
+        "min_cached_bytes": 3_000_000_000,
         "cache_subdir": "wan-1.3b-vace",
         "label": "Wan2.1-VACE-1.3B (lightweight, ~5 GB, needs ~8 GB VRAM) [backend: wan-1.3b-vace]",
     },
     "wan-move-fast": {
         "expected_bytes": 45_000_000_000,
+        "min_cached_bytes": 20_000_000_000,
         "cache_subdir": "wan-move-fast",
         "label": "LightX2V Wan2.1 I2V 4-step fast backend (~45 GB with companion Wan assets) [backend: wan-move-fast]",
         "required_paths": [
@@ -127,6 +162,7 @@ _MODEL_SPECS: dict[str, dict] = {
         "repo_id": "facebook/sam2-hiera-large",
         "filename": None,
         "expected_bytes": 900_000_000,
+        "min_cached_bytes": 500_000_000,
         "cache_subdir": "sam2",
         "label": "SAM-2 Large segmenter (~900 MB) [--segmenter sam2]",
     },

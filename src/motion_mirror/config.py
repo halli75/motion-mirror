@@ -25,9 +25,9 @@ class MotionMirrorConfig:
 
     # Generation backend
     # "auto"          - detect VRAM at runtime and pick the best option
-    # "wan-move-14b"  - 14B I2V, ~24 GB VRAM
-    # "wan-move-fast" - true LightX2V 4-step Wan2.1 I2V fast backend
-    # "wan-move-gguf" - experimental GGUF-quantized Wan transformer via Diffusers
+    # "wan-move-14b"  - Wan I2V path; true trajectory injection still pending
+    # "wan-move-fast" - LightX2V 4-step Wan2.1 I2V fast backend
+    # "wan-move-gguf" - experimental GGUF-quantized Wan I2V via Diffusers
     # "wan-1.3b-vace" - 1.3B VACE, ~8 GB VRAM
     # "controlnet"    - deprecated alias for "wan-1.3b-vace"
     # "mock"          - solid-colour video, no GPU required

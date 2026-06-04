@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
-from motion_mirror.cli import app
+from motion_mirror.cli import _is_spec_cached, app
 
 runner = CliRunner()
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -71,6 +71,38 @@ def test_run_help_documents_v02a_public_surface():
         "--reference-masker",
     ):
         assert text in out
+
+
+def test_download_cache_requires_required_paths(tmp_path):
+    spec = {
+        "filename": None,
+        "required_paths": ["model_index.json", "weights"],
+    }
+    cache_dir = tmp_path / "model"
+    cache_dir.mkdir()
+    (cache_dir / "model_index.json").write_text("{}", encoding="utf-8")
+
+    assert not _is_spec_cached(cache_dir, spec)
+
+    weights = cache_dir / "weights"
+    weights.mkdir()
+    (weights / "part.bin").write_bytes(b"weights")
+    assert _is_spec_cached(cache_dir, spec)
+
+
+def test_download_cache_rejects_tiny_partial_snapshot(tmp_path):
+    spec = {
+        "filename": None,
+        "min_cached_bytes": 100,
+    }
+    cache_dir = tmp_path / "model"
+    cache_dir.mkdir()
+    (cache_dir / "partial.bin").write_bytes(b"x")
+
+    assert not _is_spec_cached(cache_dir, spec)
+
+    (cache_dir / "full.bin").write_bytes(b"x" * 100)
+    assert _is_spec_cached(cache_dir, spec)
 
 
 # ── presets ───────────────────────────────────────────────────────────────────

@@ -81,8 +81,8 @@ class NoPoseDetectedError(PoseError):
 class MultiplePeopleDetectedError(PoseError):
     """Raised when DWPose finds more than one person in the reference video.
 
-    Motion Mirror v0.1 supports single-person transfer only.  Use
-    ``--person-index N`` to select by bounding-box area (0 = largest).
+    Motion Mirror currently supports single-person transfer only. Crop the
+    reference video to one person before running the pipeline.
 
     Attributes
     ----------

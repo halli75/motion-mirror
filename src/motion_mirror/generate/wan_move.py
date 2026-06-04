@@ -10,6 +10,10 @@ wan-move-14b
     Uses diffusers.WanImageToVideoPipeline with the
     Wan-AI/Wan2.1-I2V-14B-720P-Diffusers checkpoint.
 
+wan-move-gguf
+    Loads a GGUF-quantized Wan transformer as a Diffusers model component, then
+    injects it into WanImageToVideoPipeline.
+
 wan-move-fast
     Uses the LightX2V runtime with a Wan2.1 four-step distilled model plus the
     companion Wan components (T5, CLIP, VAE, tokenizers, config) arranged in a
@@ -30,6 +34,11 @@ from ..types import GenerationResult
 from .models import GenerationRequest
 
 _WAN_MODEL_ID = "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers"
+_WAN_GGUF_BASE_MODEL_ID = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
+_WAN_GGUF_CANDIDATES: tuple[str, ...] = (
+    "wan2.1-i2v-14b-480p-Q4_K_M.gguf",
+    "wan2.1-i2v-14b-480p-Q4_1.gguf",
+)
 
 _NEGATIVE_PROMPT = (
     "Bright tones, overexposed, static, blurred details, subtitles, style, "
@@ -95,6 +104,8 @@ def generate_with_wan_move(
 
     if cfg.backend == "mock" or request.backend == "mock":
         return _generate_mock(request, out_w, out_h)
+    if cfg.backend == "wan-move-gguf" or request.backend == "wan-move-gguf":
+        return _generate_gguf(request, cfg, out_w, out_h)
     if cfg.backend == "wan-move-fast" or request.backend == "wan-move-fast":
         return _generate_fast(request, cfg, out_w, out_h)
     return _generate_real(request, cfg, out_w, out_h)
@@ -230,6 +241,93 @@ def _generate_real(
     )
 
 
+def _generate_gguf(
+    request: GenerationRequest,
+    config: MotionMirrorConfig,
+    out_w: int,
+    out_h: int,
+) -> GenerationResult:
+    """Invoke Wan2.1-I2V with a GGUF transformer loaded at model level."""
+    _validate_common_inputs(request)
+    transformer_path = _resolve_wan_gguf_transformer_path(config)
+
+    try:
+        import torch  # type: ignore[import]
+    except ImportError as exc:
+        raise ImportError(
+            "torch is not installed. Run: pip install -e '.[gguf]'"
+        ) from exc
+
+    try:
+        from PIL import Image  # type: ignore[import]
+        from diffusers import (  # type: ignore[import]
+            GGUFQuantizationConfig,
+            WanImageToVideoPipeline,
+            WanTransformer3DModel,
+        )
+    except ImportError as exc:
+        raise ImportError(
+            "GGUF generation requires diffusers, transformers, accelerate, "
+            "Pillow, and GGUF support.\n"
+            "Run: pip install -e '.[gguf]'"
+        ) from exc
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    dtype = torch.bfloat16
+    transformer = WanTransformer3DModel.from_single_file(
+        str(transformer_path),
+        quantization_config=GGUFQuantizationConfig(compute_dtype=dtype),
+        config=_WAN_GGUF_BASE_MODEL_ID,
+        subfolder="transformer",
+        torch_dtype=dtype,
+    )
+    pipe = WanImageToVideoPipeline.from_pretrained(
+        _resolve_wan_gguf_base_source(config),
+        transformer=transformer,
+        torch_dtype=dtype,
+    )
+    if config.offload_model:
+        pipe.enable_sequential_cpu_offload()
+    else:
+        pipe.to(config.device)
+    if config.t5_cpu:
+        text_encoder = getattr(pipe, "text_encoder", None)
+        if text_encoder is not None and hasattr(text_encoder, "to"):
+            text_encoder.to("cpu")
+    pipe.enable_attention_slicing(1)
+
+    char_image = _load_character_image(request.segmented_image_path)
+    width, height = _snap_wan_size(pipe, out_w, out_h)
+    char_image = char_image.resize((width, height), Image.LANCZOS)
+
+    generator = torch.Generator(device=config.device).manual_seed(request.seed)
+    output = pipe(
+        image=char_image,
+        prompt=_build_prompt(request.trajectory_map_path),
+        negative_prompt=_NEGATIVE_PROMPT,
+        height=height,
+        width=width,
+        num_frames=request.frames,
+        guidance_scale=5.0,
+        generator=generator,
+    ).frames[0]
+
+    _write_output_frames(request.output_path, output)
+
+    del pipe, transformer
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return GenerationResult(
+        video_path=request.output_path,
+        backend="wan-move-gguf",
+        resolution=request.resolution,
+        num_frames=request.frames,
+    )
+
+
 def _generate_fast(
     request: GenerationRequest,
     config: MotionMirrorConfig,
@@ -328,6 +426,38 @@ def _resolve_wan_model_source(config: MotionMirrorConfig) -> str:
             "Run: motion-mirror download --model wan-move"
         )
     return _WAN_MODEL_ID
+
+
+def _resolve_wan_gguf_transformer_path(config: MotionMirrorConfig) -> Path:
+    model_dir = config.model_cache("wan-move-gguf")
+    if not model_dir.exists() or not any(model_dir.iterdir()):
+        expected = ", ".join(_WAN_GGUF_CANDIDATES)
+        raise FileNotFoundError(
+            f"Wan GGUF transformer weights not found in {model_dir}.\n"
+            f"Expected one of: {expected}.\n"
+            "Run: motion-mirror download --model gguf"
+        )
+
+    candidate = _find_existing_path(model_dir, _WAN_GGUF_CANDIDATES)
+    if candidate is not None:
+        return candidate
+
+    gguf_files = sorted(model_dir.glob("*.gguf"))
+    if len(gguf_files) == 1:
+        return gguf_files[0]
+
+    expected = ", ".join(_WAN_GGUF_CANDIDATES)
+    raise FileNotFoundError(
+        f"Wan GGUF backend is missing a supported transformer asset in {model_dir}.\n"
+        f"Expected one of: {expected}."
+    )
+
+
+def _resolve_wan_gguf_base_source(config: MotionMirrorConfig) -> str:
+    model_dir = config.cache_dir / "wan-move"
+    if model_dir.exists() and (model_dir / "model_index.json").exists():
+        return str(model_dir)
+    return _WAN_GGUF_BASE_MODEL_ID
 
 
 def _resolve_lightx2v_model_dir(config: MotionMirrorConfig) -> Path:

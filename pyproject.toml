@@ -47,6 +47,12 @@ gpu-inference = [
   "ftfy",
   "Pillow",
 ]
+gguf = [
+  "diffusers[gguf]>=0.38",
+  "transformers",
+  "accelerate",
+  "Pillow",
+]
 lightx2v = [
   "lightx2v @ git+https://github.com/ModelTC/LightX2V.git",
   "pyzmq>=26",

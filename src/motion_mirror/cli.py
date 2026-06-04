@@ -120,6 +120,41 @@ _MODEL_SPECS: dict[str, dict] = {
         "cache_subdir": "wan-1.3b-vace",
         "label": "Wan2.1-VACE-1.3B (lightweight, ~5 GB, needs ~8 GB VRAM) [backend: wan-1.3b-vace]",
     },
+    "wan-1.3b-concat-id": {
+        "expected_bytes": 9_000_000_000,
+        "min_cached_bytes": 3_000_000_000,
+        "cache_subdir": "wan-1.3b-concat-id",
+        "label": "Concat-ID Wan2.1-T2V-1.3B identity backend (experimental) [backend: wan-1.3b-concat-id]",
+        "required_paths": [
+            "diffusion_pytorch_model.safetensors",
+            "models_t5_umt5-xxl-enc-bf16.pth",
+            "Wan2.1_VAE.pth",
+            "google",
+            "second_stage_adaln.pt",
+            "antelopev2",
+        ],
+        "sources": [
+            {
+                "repo_id": "Wan-AI/Wan2.1-T2V-1.3B",
+                "filename": None,
+                "allow_patterns": [
+                    "diffusion_pytorch_model*.safetensors",
+                    "models_t5_umt5-xxl-enc-bf16.pth",
+                    "Wan2.1_VAE.pth",
+                    "google/**",
+                ],
+            },
+            {
+                "repo_id": "yongzhong/Concat-ID-Wan",
+                "filename": None,
+                "allow_patterns": [
+                    "first_stage.pt",
+                    "second_stage_adaln.pt",
+                    "antelopev2/**",
+                ],
+            },
+        ],
+    },
     "wan-move-fast": {
         "expected_bytes": 45_000_000_000,
         "min_cached_bytes": 20_000_000_000,
@@ -174,6 +209,8 @@ _MODEL_GROUPS = {
     "gguf": ["wan-move-gguf"],
     "light": ["wan-1.3b-vace"],
     "fast": ["wan-move-fast"],
+    "identity": ["wan-1.3b-concat-id"],
+    "concat-id": ["wan-1.3b-concat-id"],
     "extras": ["sam2"],
     "all": [
         "dwpose-pose",
@@ -181,6 +218,7 @@ _MODEL_GROUPS = {
         "wan-move",
         "wan-move-gguf",
         "wan-1.3b-vace",
+        "wan-1.3b-concat-id",
         "wan-move-fast",
         "sam2",
     ],
@@ -191,7 +229,7 @@ _MODEL_GROUPS = {
 def run(
     image: Path = typer.Argument(..., help="Character image path (PNG/JPG/WEBP)."),
     motion: Path = typer.Argument(..., help="Reference motion video path (MP4/MOV/AVI/MKV)."),
-    backend: Optional[str] = typer.Option(None, help="Backend: wan-move-14b | wan-move-fast | wan-move-gguf | wan-1.3b-vace | mock | auto."),
+    backend: Optional[str] = typer.Option(None, help="Backend: wan-move-14b | wan-move-fast | wan-move-gguf | wan-1.3b-vace | wan-1.3b-concat-id | mock | auto."),
     resolution: Optional[str] = typer.Option(None, help="Output resolution WxH, e.g. 832x480."),
     frames: Optional[int] = typer.Option(None, help="Number of output frames."),
     density: Optional[int] = typer.Option(None, help="Trajectory density (512 = default, 1024 = HQ)."),
@@ -276,8 +314,9 @@ def download(
     model: str = typer.Option(
         "all",
         help=(
-            "Model(s) to download: all | dwpose | wan-move | gguf | light | fast | extras | "
-            "wan-move-gguf | wan-1.3b-vace | wan-move-fast | sam2 | dwpose-pose | dwpose-det."
+            "Model(s) to download: all | dwpose | wan-move | gguf | light | fast | identity | "
+            "concat-id | extras | wan-move-gguf | wan-1.3b-vace | wan-1.3b-concat-id | "
+            "wan-move-fast | sam2 | dwpose-pose | dwpose-det."
         ),
     ),
     cache_dir: Optional[Path] = typer.Option(None, help="Override default cache directory."),

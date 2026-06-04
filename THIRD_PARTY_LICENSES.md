@@ -103,6 +103,11 @@ license.
 - **Source:** https://github.com/ggml-org/ggml
 - **Use:** Loading GGUF-quantized Wan transformer checkpoints through Diffusers
 
+### DiffSynth-Studio / DiffSynth (optional — v0.2b identity backend)
+- **License:** Apache 2.0
+- **Source:** https://github.com/modelscope/DiffSynth-Studio
+- **Use:** Experimental Concat-ID Wan runtime integration for `wan-1.3b-concat-id`
+
 ---
 
 ## Model Weights
@@ -136,6 +141,18 @@ license.
 - **Source:** https://huggingface.co/Wan-AI/Wan2.1-VACE-1.3B-diffusers
 - **Provider:** Alibaba / Wan-AI
 - **Use:** Low-VRAM VACE generation backend for `wan-1.3b-vace`
+
+### Wan2.1-T2V-1.3B
+- **License:** Apache 2.0
+- **Source:** https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B
+- **Provider:** Alibaba / Wan-AI
+- **Use:** Base model for the experimental `wan-1.3b-concat-id` identity backend
+
+### Concat-ID-Wan
+- **License:** Review the upstream model card before redistribution or commercial use
+- **Source:** https://huggingface.co/yongzhong/Concat-ID-Wan
+- **Provider:** ML-GSAI / Yong Zhong
+- **Use:** Experimental identity adapter weights for `wan-1.3b-concat-id`
 
 ### UMT5-XXL Text Encoder
 - **License:** Apache 2.0

@@ -26,8 +26,8 @@ character.png + motion_video.mp4
                            Layer 3 — optical flow (Farneback or RAFT)
         │
         ▼
- [4] Generate video        wan-move-14b, wan-move-fast,
-                           wan-move-gguf, wan-1.3b-vace, or mock
+ [4] Generate video        wan-1.3b-vace, Wan I2V accessibility
+                           experiments, or mock
         │
         ▼
  [5] Passthrough audio     Original audio muxed into output
@@ -185,6 +185,8 @@ motion-mirror run character.png motion.mp4 \
 
 `wan-move-gguf` and `--reference-masker sam2` are experimental until real GPU validation is complete. Non-GPU CI covers their config, CLI, routing, and mocked backend contracts.
 
+> **Motion-conditioning note:** The current Diffusers, GGUF, and LightX2V Wan paths synthesize trajectory maps but pass trajectory metadata into the text prompt rather than injecting track tensors into the Wan-Move latent trajectory guidance runtime. The VACE path consumes skeleton/mask conditioning today. True `wan.WanMove` trajectory tensor integration is a release gate before claiming full Wan-Move motion-control parity. See [`docs/wan-move-trajectory-conditioning.md`](docs/wan-move-trajectory-conditioning.md).
+
 ### Presets
 
 ```bash
@@ -264,10 +266,10 @@ All exceptions inherit from `MotionMirrorError`.
 The character's face in the output may not closely match the input photo, especially during large head movements or fast motion. This is a fundamental property of the Wan2.1-I2V-14B model, which has no explicit face-identity conditioning. Identity preservation is tracked for v0.3 via reward-guided optimization (IPRO).
 
 **Single-person only**
-Multi-person reference videos raise `MultiplePeopleDetectedError`. Crop to one person, or use `--person-index N` (planned for v0.2).
+Multi-person reference videos raise `MultiplePeopleDetectedError`. Crop the reference video to one person before running Motion Mirror.
 
 **Backend maturity varies**
-`wan-1.3b-vace`, `wan-move-fast`, `wan-move-gguf`, RAFT, and SAM-2 options are v0.2a accessibility features. `wan-move-gguf` and SAM-2 reference-video propagation are experimental until real GPU validation is complete.
+`wan-1.3b-vace`, `wan-move-fast`, `wan-move-gguf`, RAFT, and SAM-2 options are v0.2a accessibility features. `wan-move-gguf`, LightX2V fast mode, true Wan-Move trajectory conditioning, and SAM-2 reference-video propagation are experimental until real GPU validation is complete.
 
 **8 GB+ GPU required for real generation**
 The 1.3B VACE backend targets 8-12 GB GPUs. The 14B full backend still requires much larger cards. CPU offloading uses system RAM as overflow storage during inference.
@@ -280,13 +282,19 @@ With sequential CPU offloading (required for ≤32 GB VRAM), a 17-frame clip tak
 
 ---
 
-## Validated hardware
+## Validation Status
 
-End-to-end GPU tests (6/6 passing) verified on:
+Non-GPU CI passes for config, CLI, routing, mocks, and package imports. Real v0.2a hardware validation is still pending for the accessibility claims below:
 
-| GPU | VRAM | Result |
-|---|---|---|
-| RTX 5090 (RunPod) | 32 GB | All tests pass ✅ |
+| Backend | Target Hardware | Status |
+|---|---:|---|
+| `wan-1.3b-vace` | 8-12 GB | Needs measured VRAM/output validation |
+| `wan-move-fast` | 24 GB | Needs LightX2V GPU smoke after RunPod credits |
+| `wan-move-gguf` | 12-16 GB | Needs GGUF GPU smoke |
+| `wan-move-14b` | 40 GB+ | Needs true Wan-Move trajectory-conditioning integration |
+| `--reference-masker sam2` | CUDA GPU | Needs SAM-2 propagation smoke |
+
+See [`docs/v02a-hardware-validation.md`](docs/v02a-hardware-validation.md) for the validation matrix and [`docs/windows-install.md`](docs/windows-install.md) for Windows setup notes.
 
 ---
 

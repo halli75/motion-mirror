@@ -53,3 +53,35 @@
 - Targeted v0.2a tests: `115 passed, 6 warnings`.
 - Full non-GPU suite: `202 passed, 9 deselected, 17 warnings`.
 - Real GPU validation was not run.
+
+---
+
+# Motion Mirror Next Steps
+
+## PR Closeout
+- PR #1 (`feat(v0.2a): add accessible backends and masking`) merged into `main`.
+- Merge commit on `main`: `25c28d9`.
+- GitHub Actions `Lint + non-GPU tests` passed before merge.
+- Local `main` synced to `origin/main` after merge.
+
+## Release Hardening Review
+- Added `scripts/v02a_gpu_smoke.py` to run repeatable backend smoke validation on CUDA machines and emit JSON evidence.
+- Added `docs/v02a-hardware-validation.md` with the v0.2a GPU validation matrix and acceptance criteria.
+- Added `docs/windows-install.md` for the Windows CUDA install and smoke-test path.
+- Added `docs/wan-move-trajectory-conditioning.md` to document the true Wan-Move integration gap and upstream `wan.WanMove` API shape.
+- Added `docs/v02b-scope.md` for Concat-ID and ComfyUI sequencing.
+- Tightened model-cache completeness checks so partial model directories are not treated as valid downloads.
+- Updated README and runtime warnings to state that Diffusers/GGUF/LightX2V Wan paths are still prompt-only with respect to trajectory metadata.
+- Removed public references to unsupported `--person-index` behavior.
+
+## Release Hardening Verification
+- PR #1 merge and local `main` sync: passed.
+- CUDA check on this workstation: `torch.cuda.is_available() == False`; real GPU validation still requires RunPod or another CUDA host.
+- `python scripts\v02a_gpu_smoke.py --help`: passed.
+- `scripts/v02a_gpu_smoke.py` config construction bug fixed and covered by `tests/test_v02a_gpu_smoke.py`.
+- `python -m build --wheel`: passed and included packaged presets.
+- Clean wheel install smoke with `PYTHONPATH` cleared: `motion-mirror --help`, `motion-mirror presets --list`, and `motion-mirror download --help` passed.
+- Targeted tests: `pytest tests/test_v02a_gpu_smoke.py tests/test_cli.py tests/test_generate.py -q --tb=short` passed (`41 passed`).
+- Full non-GPU suite: `pytest -m "not gpu" -q --tb=short` passed (`206 passed, 9 deselected, 22 warnings`).
+- Compile check for changed Python files: passed.
+- `git diff --check`: passed with Windows line-ending warnings only.

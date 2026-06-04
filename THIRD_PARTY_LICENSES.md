@@ -111,7 +111,13 @@ license.
 - **License:** Apache 2.0
 - **Source:** https://huggingface.co/Wan-AI/Wan2.1-I2V-14B-720P-Diffusers
 - **Provider:** Alibaba / Wan-AI
-- **Use:** Image-to-video generation backbone for `wan-move-14b`
+- **Use:** Image-to-video generation backbone for the current `wan-move-14b` path. True Wan-Move trajectory-guidance weights are tracked separately.
+
+### Wan-Move-14B-480P (planned trajectory-guidance backend)
+- **License:** Apache 2.0
+- **Source:** https://huggingface.co/Ruihang/Wan-Move-14B-480P
+- **Provider:** Alibaba Tongyi Lab / Ruihang Chu
+- **Use:** Planned source for true `wan.WanMove` latent trajectory guidance integration.
 
 ### Wan2.1-I2V-14B GGUF quantizations
 - **License:** Apache 2.0 inherited from upstream Wan2.1 weights unless a specific quantized checkpoint states otherwise

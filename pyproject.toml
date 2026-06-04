@@ -57,6 +57,11 @@ lightx2v = [
   "lightx2v @ git+https://github.com/ModelTC/LightX2V.git",
   "pyzmq>=26",
 ]
+concat-id = [
+  "torch>=2.2",
+  "diffsynth",
+  "Pillow",
+]
 
 [project.scripts]
 motion-mirror = "motion_mirror.cli:app"

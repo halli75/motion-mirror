@@ -91,6 +91,9 @@ pip install -e ".[gguf]"
 
 # SAM-2 segmenter / reference-video masker
 pip install git+https://github.com/facebookresearch/sam2.git
+
+# Experimental Concat-ID identity backend
+pip install -e ".[concat-id]"
 ```
 
 ### 4. Download model weights
@@ -104,6 +107,9 @@ motion-mirror download --model gguf
 
 # Wan2.1-VACE-1.3B low-VRAM backend
 motion-mirror download --model wan-1.3b-vace
+
+# Experimental Concat-ID Wan2.1-T2V-1.3B identity backend
+motion-mirror download --model concat-id
 
 # LightX2V 4-step fast backend assets
 motion-mirror download --model fast
@@ -136,6 +142,10 @@ motion-mirror run character.png motion.mp4 \
   --backend wan-1.3b-vace \
   --offload-model \
   --t5-cpu
+
+# Experimental v0.2b identity path
+motion-mirror run character.png motion.mp4 \
+  --preset identity
 
 # Explicit options
 motion-mirror run character.png motion.mp4 \
@@ -174,7 +184,7 @@ Commands:
 
 ```bash
 motion-mirror run character.png motion.mp4 \
-  --backend wan-move-14b|wan-move-fast|wan-move-gguf|wan-1.3b-vace|mock|auto \
+  --backend wan-move-14b|wan-move-fast|wan-move-gguf|wan-1.3b-vace|wan-1.3b-concat-id|mock|auto \
   --auto \
   --offload-model \
   --t5-cpu \
@@ -183,7 +193,9 @@ motion-mirror run character.png motion.mp4 \
   --reference-masker sam2
 ```
 
-`wan-move-gguf` and `--reference-masker sam2` are experimental until real GPU validation is complete. Non-GPU CI covers their config, CLI, routing, and mocked backend contracts.
+`wan-move-gguf`, `wan-1.3b-concat-id`, and `--reference-masker sam2` are experimental until real GPU validation is complete. Non-GPU CI covers their config, CLI, routing, and mocked backend contracts.
+
+> **Identity note:** `wan-1.3b-concat-id` is a separate Concat-ID Wan2.1-T2V-1.3B experiment. It is not mixed into `wan-1.3b-vace` because the public Concat-ID Wan release uses a DiffSynth-style T2V runtime, not the VACE pipeline.
 
 > **Motion-conditioning note:** The current Diffusers, GGUF, and LightX2V Wan paths synthesize trajectory maps but pass trajectory metadata into the text prompt rather than injecting track tensors into the Wan-Move latent trajectory guidance runtime. The VACE path consumes skeleton/mask conditioning today. True `wan.WanMove` trajectory tensor integration is a release gate before claiming full Wan-Move motion-control parity. See [`docs/wan-move-trajectory-conditioning.md`](docs/wan-move-trajectory-conditioning.md).
 
@@ -201,6 +213,7 @@ motion-mirror presets --list
 | `low-vram` | 832×480 | 81 | 512 | `wan-1.3b-vace` with offload/T5 CPU |
 | `fast` | 832×480 | 81 | 512 | true LightX2V 4-step backend |
 | `gguf` | 832×480 | 81 | 512 | experimental GGUF-quantized Wan backend |
+| `identity` | 832×480 | 81 | 512 | experimental Concat-ID identity backend |
 
 ### Benchmark
 
@@ -262,14 +275,14 @@ All exceptions inherit from `MotionMirrorError`.
 
 ## Known Limitations
 
-**Identity drift (v0.2a — Wan backends)**
-The character's face in the output may not closely match the input photo, especially during large head movements or fast motion. This is a fundamental property of the Wan2.1-I2V-14B model, which has no explicit face-identity conditioning. Identity preservation is tracked for v0.3 via reward-guided optimization (IPRO).
+**Identity drift**
+The standard Wan I2V and VACE paths can drift from the input face during large head movements or fast motion. The v0.2b `wan-1.3b-concat-id` backend is an experimental identity path, but it still needs real GPU comparison before it can be recommended as the default.
 
 **Single-person only**
 Multi-person reference videos raise `MultiplePeopleDetectedError`. Crop the reference video to one person before running Motion Mirror.
 
 **Backend maturity varies**
-`wan-1.3b-vace`, `wan-move-fast`, `wan-move-gguf`, RAFT, and SAM-2 options are v0.2a accessibility features. `wan-move-gguf`, LightX2V fast mode, true Wan-Move trajectory conditioning, and SAM-2 reference-video propagation are experimental until real GPU validation is complete.
+`wan-1.3b-vace`, `wan-move-fast`, `wan-move-gguf`, RAFT, and SAM-2 options are v0.2a accessibility features. `wan-1.3b-concat-id` and ComfyUI nodes are v0.2b experimental features. `wan-move-gguf`, LightX2V fast mode, true Wan-Move trajectory conditioning, SAM-2 reference-video propagation, and Concat-ID identity quality are experimental until real GPU validation is complete.
 
 **8 GB+ GPU required for real generation**
 The 1.3B VACE backend targets 8-12 GB GPUs. The 14B full backend still requires much larger cards. CPU offloading uses system RAM as overflow storage during inference.
@@ -291,6 +304,7 @@ Non-GPU CI passes for config, CLI, routing, mocks, and package imports. Real v0.
 | `wan-1.3b-vace` | 8-12 GB | Needs measured VRAM/output validation |
 | `wan-move-fast` | 24 GB | Needs LightX2V GPU smoke after RunPod credits |
 | `wan-move-gguf` | 12-16 GB | Needs GGUF GPU smoke |
+| `wan-1.3b-concat-id` | 8-12 GB | Needs identity comparison GPU smoke |
 | `wan-move-14b` | 40 GB+ | Needs true Wan-Move trajectory-conditioning integration |
 | `--reference-masker sam2` | CUDA GPU | Needs SAM-2 propagation smoke |
 

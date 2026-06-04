@@ -104,6 +104,7 @@ def create_app(config: "MotionMirrorConfig | None" = None):
                         "wan-move-fast",
                         "wan-move-gguf",
                         "wan-1.3b-vace",
+                        "wan-1.3b-concat-id",
                         "mock",
                     ],
                     value=cfg_defaults.backend,

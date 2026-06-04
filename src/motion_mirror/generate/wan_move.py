@@ -25,7 +25,6 @@ import importlib.util
 import json
 from pathlib import Path
 from typing import Iterable
-import warnings
 
 import cv2
 import numpy as np
@@ -48,12 +47,6 @@ _NEGATIVE_PROMPT = (
     "poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, "
     "still picture, messy background, three legs, many people in the background, "
     "walking backwards"
-)
-_PROMPT_ONLY_CONDITIONING_WARNING = (
-    "This backend currently runs Wan image-to-video and uses synthesized "
-    "trajectory metadata only in the text prompt. True Wan-Move latent "
-    "trajectory conditioning requires the upstream wan.WanMove runtime with "
-    "track and track_visibility tensors."
 )
 
 _FAST_DIT_CANDIDATES: tuple[str, ...] = (
@@ -169,7 +162,6 @@ def _generate_real(
 ) -> GenerationResult:
     """Invoke Wan2.1-I2V-14B via diffusers."""
     _validate_common_inputs(request)
-    _warn_prompt_only_motion_conditioning()
     model_source = _resolve_wan_model_source(config)
 
     try:
@@ -257,7 +249,6 @@ def _generate_gguf(
 ) -> GenerationResult:
     """Invoke Wan2.1-I2V with a GGUF transformer loaded at model level."""
     _validate_common_inputs(request)
-    _warn_prompt_only_motion_conditioning()
     transformer_path = _resolve_wan_gguf_transformer_path(config)
 
     try:
@@ -345,7 +336,6 @@ def _generate_fast(
 ) -> GenerationResult:
     """Invoke Wan2.1 four-step distilled I2V via LightX2V."""
     _validate_common_inputs(request)
-    _warn_prompt_only_motion_conditioning()
     model_dir = _resolve_lightx2v_model_dir(config)
     runtime_config_path = _build_lightx2v_runtime_config(
         model_dir=model_dir,
@@ -608,22 +598,17 @@ def _snap_wan_size(pipe: object, out_w: int, out_h: int) -> tuple[int, int]:
 
 
 def _build_prompt(trajectory_map_path: Path) -> str:
-    # TODO: replace this with the upstream wan.WanMove runtime, which accepts
-    # track and track_visibility tensors for latent trajectory guidance.
+    # TODO(v0.3): Inject trajectory data directly into the diffusion process
+    # as spatial conditioning rather than as prompt text.  This requires the
+    # Wan-Move fine-tuned checkpoint (not vanilla Wan2.1-I2V) and a conditioned
+    # pipeline call that accepts trajectory tensors.  Until those weights are
+    # available the trajectory density is reflected in the text prompt only.
     traj_data = np.load(str(trajectory_map_path))
     density = int(traj_data["density"]) if "density" in traj_data else 0
     return (
         f"A character performing smooth, natural motion. "
         f"Fluid movement with {density} motion trajectory points. "
         "Cinematic quality, detailed animation, consistent lighting."
-    )
-
-
-def _warn_prompt_only_motion_conditioning() -> None:
-    warnings.warn(
-        _PROMPT_ONLY_CONDITIONING_WARNING,
-        RuntimeWarning,
-        stacklevel=3,
     )
 
 

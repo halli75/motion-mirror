@@ -13,7 +13,6 @@ import pytest
 from PIL import Image
 
 from motion_mirror.config import MotionMirrorConfig
-from motion_mirror.generate import wan_move
 from motion_mirror.generate.controlnet import generate_with_controlnet
 from motion_mirror.generate.models import GenerationRequest
 from motion_mirror.generate.wan_move import generate_with_wan_move
@@ -158,11 +157,6 @@ def test_wan_move_real_path_requires_weights(tmp_path):
     cfg = MotionMirrorConfig(project_root=tmp_path, backend="wan-move-14b", device="cpu")
     with pytest.raises((NotImplementedError, FileNotFoundError)):
         generate_with_wan_move(req, cfg)
-
-
-def test_wan_move_prompt_only_conditioning_warning_is_explicit():
-    with pytest.warns(RuntimeWarning, match="track_visibility"):
-        wan_move._warn_prompt_only_motion_conditioning()
 
 
 def test_wan_move_gguf_request_backend_routes(tmp_path):

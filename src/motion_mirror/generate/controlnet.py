@@ -255,6 +255,7 @@ def _load_video_frames(
                 pil = Image.fromarray(converted, "RGB")
             else:
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                gray = np.where(gray > 127, np.uint8(255), np.uint8(0))
                 pil = Image.fromarray(gray, "L")
             frames.append(pil.resize(target_size, Image.NEAREST))
     finally:

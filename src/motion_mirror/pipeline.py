@@ -7,6 +7,10 @@ import warnings
 
 from .config import MotionMirrorConfig
 from .extract.pose import extract_pose
+from .extract.reference_mask import (
+    propagate_reference_masks,
+    write_vace_reference_mask_video,
+)
 from .extract.render_skeleton import render_skeleton_conditioning_artifacts
 from .extract.segment import segment_subject
 from .extract.trajectory import synthesize_trajectory
@@ -26,6 +30,7 @@ class PipelineRunResult:
     trajectory_path: Path | None = None
     conditioning_video_path: Path | None = None
     conditioning_mask_path: Path | None = None
+    reference_mask_path: Path | None = None
 
 
 class MotionMirrorPipeline:
@@ -51,7 +56,13 @@ class MotionMirrorPipeline:
             )
             cfg = dataclasses.replace(cfg, backend="wan-1.3b-vace")
 
-        valid_backends = {"wan-move-14b", "wan-move-fast", "wan-1.3b-vace", "mock"}
+        valid_backends = {
+            "wan-move-14b",
+            "wan-move-fast",
+            "wan-move-gguf",
+            "wan-1.3b-vace",
+            "mock",
+        }
         if cfg.backend not in valid_backends:
             raise ValueError(
                 f"Unknown backend {cfg.backend!r}. "
@@ -67,6 +78,14 @@ class MotionMirrorPipeline:
 
         seg = segment_subject(image_path, cfg)
         pose = extract_pose(motion_video_path, cfg)
+        reference_masks = None
+        if cfg.reference_masker == "sam2":
+            reference_masks = propagate_reference_masks(motion_video_path, pose, cfg)
+        elif cfg.reference_masker != "pose":
+            raise ValueError(
+                f"Unknown reference_masker {cfg.reference_masker!r}. "
+                "Valid choices: ['pose', 'sam2']."
+            )
 
         conditioning_video_path: Path | None = None
         conditioning_mask_path: Path | None = None
@@ -80,8 +99,21 @@ class MotionMirrorPipeline:
                 size=cfg.resolution_wh,
                 num_frames=cfg.num_frames,
             )
+            if reference_masks is not None:
+                write_vace_reference_mask_video(
+                    reference_masks=reference_masks,
+                    path=conditioning_mask_path,
+                    size=cfg.resolution_wh,
+                    num_frames=cfg.num_frames,
+                )
 
-        traj = synthesize_trajectory(pose, seg, motion_video_path, cfg)
+        traj = synthesize_trajectory(
+            pose,
+            seg,
+            motion_video_path,
+            cfg,
+            reference_masks=reference_masks,
+        )
         traj_path = cfg.output_dir / "trajectory.npz"
         traj.save(traj_path)
 
@@ -97,7 +129,7 @@ class MotionMirrorPipeline:
             device=cfg.device,
         )
 
-        if cfg.backend in ("wan-move-14b", "wan-move-fast", "mock"):
+        if cfg.backend in ("wan-move-14b", "wan-move-fast", "wan-move-gguf", "mock"):
             gen = generate_with_wan_move(gen_request, cfg)
         else:
             gen = generate_with_controlnet(gen_request, cfg)
@@ -116,4 +148,7 @@ class MotionMirrorPipeline:
             trajectory_path=traj_path,
             conditioning_video_path=conditioning_video_path,
             conditioning_mask_path=conditioning_mask_path,
+            reference_mask_path=(
+                reference_masks.mask_video_path if reference_masks is not None else None
+            ),
         )

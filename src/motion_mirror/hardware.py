@@ -6,9 +6,29 @@ from dataclasses import dataclass
 
 from .exceptions import InsufficientVRAMError
 
-_HIGH_END_VRAM_GB = 24.0
+_FULL_MODEL_VRAM_GB = 40.0
+_FAST_MODEL_VRAM_GB = 24.0
+_GGUF_MODEL_VRAM_GB = 16.0
 _MID_TIER_VRAM_GB = 12.0
 _MIN_VRAM_GB = 8.0
+
+
+@dataclass(frozen=True)
+class BackendTier:
+    """A VRAM floor and concrete backend selected by backend='auto'."""
+
+    minimum_vram_gb: float
+    backend: str
+    overrides: tuple[tuple[str, bool], ...] = ()
+
+
+_BACKEND_TIERS: tuple[BackendTier, ...] = (
+    BackendTier(_FULL_MODEL_VRAM_GB, "wan-move-14b"),
+    BackendTier(_FAST_MODEL_VRAM_GB, "wan-move-fast", (("offload_model", True), ("t5_cpu", True))),
+    BackendTier(_GGUF_MODEL_VRAM_GB, "wan-move-gguf", (("offload_model", True), ("t5_cpu", True))),
+    BackendTier(_MID_TIER_VRAM_GB, "wan-1.3b-vace", (("t5_cpu", True),)),
+    BackendTier(_MIN_VRAM_GB, "wan-1.3b-vace", (("offload_model", True), ("t5_cpu", True))),
+)
 
 
 @dataclass
@@ -46,17 +66,14 @@ def get_gpu_info() -> GPUInfo | None:
 
 def recommend_backend(vram_gb: float) -> tuple[str, dict]:
     """Return (backend_name, config_overrides) for the available free VRAM."""
-    if vram_gb >= _HIGH_END_VRAM_GB:
-        return "wan-move-14b", {}
-    if vram_gb >= _MID_TIER_VRAM_GB:
-        return "wan-1.3b-vace", {}
-    if vram_gb >= _MIN_VRAM_GB:
-        return "wan-1.3b-vace", {"offload_model": True}
+    for tier in _BACKEND_TIERS:
+        if vram_gb >= tier.minimum_vram_gb:
+            return tier.backend, dict(tier.overrides)
 
     raise InsufficientVRAMError(
         f"Only {vram_gb:.1f} GB VRAM free. "
-        f"Motion Mirror requires at least {_MIN_VRAM_GB:.0f} GB for the "
-        "lightest backend (wan-1.3b-vace). "
+        f"Motion Mirror auto-selection requires at least {_MIN_VRAM_GB:.0f} GB "
+        "free VRAM for the lightest backend (wan-1.3b-vace). "
         "Free VRAM by closing other applications and try again.",
         available_gb=vram_gb,
         required_gb=_MIN_VRAM_GB,
@@ -74,8 +91,8 @@ def auto_config(base: "MotionMirrorConfig") -> "MotionMirrorConfig":  # noqa: F8
     if info is None:
         raise InsufficientVRAMError(
             "backend='auto' requested but no CUDA GPU was detected. "
-            "Use --backend mock for CPU-only testing or run on a CUDA GPU "
-            "with at least 8 GB VRAM.",
+            "Auto-selection requires a CUDA GPU with at least 8 GB free VRAM. "
+            "Use --backend mock for CPU-only testing.",
             available_gb=0.0,
             required_gb=_MIN_VRAM_GB,
         )

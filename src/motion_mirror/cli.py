@@ -71,6 +71,14 @@ _MODEL_SPECS: dict[str, dict] = {
         "cache_subdir": "wan-move",
         "label": "Wan2.1-I2V-14B-720P (diffusers format, ~28 GB) [backend: wan-move-14b]",
     },
+    "wan-move-gguf": {
+        "repo_id": "city96/Wan2.1-I2V-14B-480P-gguf",
+        "filename": "wan2.1-i2v-14b-480p-Q4_K_M.gguf",
+        "expected_bytes": 12_000_000_000,
+        "cache_subdir": "wan-move-gguf",
+        "label": "Wan2.1-I2V-14B-480P GGUF Q4_K_M transformer (~12 GB) [backend: wan-move-gguf]",
+        "required_paths": ["wan2.1-i2v-14b-480p-Q4_K_M.gguf"],
+    },
     "wan-1.3b-vace": {
         "repo_id": "Wan-AI/Wan2.1-VACE-1.3B-diffusers",
         "filename": None,
@@ -127,10 +135,19 @@ _MODEL_SPECS: dict[str, dict] = {
 _MODEL_GROUPS = {
     "dwpose": ["dwpose-pose", "dwpose-det"],
     "wan-move": ["wan-move"],
+    "gguf": ["wan-move-gguf"],
     "light": ["wan-1.3b-vace"],
     "fast": ["wan-move-fast"],
     "extras": ["sam2"],
-    "all": ["dwpose-pose", "dwpose-det", "wan-move", "wan-1.3b-vace", "wan-move-fast", "sam2"],
+    "all": [
+        "dwpose-pose",
+        "dwpose-det",
+        "wan-move",
+        "wan-move-gguf",
+        "wan-1.3b-vace",
+        "wan-move-fast",
+        "sam2",
+    ],
 }
 
 
@@ -138,7 +155,7 @@ _MODEL_GROUPS = {
 def run(
     image: Path = typer.Argument(..., help="Character image path (PNG/JPG/WEBP)."),
     motion: Path = typer.Argument(..., help="Reference motion video path (MP4/MOV/AVI/MKV)."),
-    backend: Optional[str] = typer.Option(None, help="Backend: wan-move-14b | wan-move-fast | wan-1.3b-vace | mock | auto."),
+    backend: Optional[str] = typer.Option(None, help="Backend: wan-move-14b | wan-move-fast | wan-move-gguf | wan-1.3b-vace | mock | auto."),
     resolution: Optional[str] = typer.Option(None, help="Output resolution WxH, e.g. 832x480."),
     frames: Optional[int] = typer.Option(None, help="Number of output frames."),
     density: Optional[int] = typer.Option(None, help="Trajectory density (512 = default, 1024 = HQ)."),
@@ -149,6 +166,7 @@ def run(
     t5_cpu: bool = typer.Option(False, "--t5-cpu", help="Keep T5 text encoder on CPU (~12 GB VRAM saved)."),
     flow_estimator: Optional[str] = typer.Option(None, "--flow-estimator", help="Optical flow backend: farneback | raft."),
     segmenter: Optional[str] = typer.Option(None, "--segmenter", help="Segmentation model: rembg | sam2."),
+    reference_masker: Optional[str] = typer.Option(None, "--reference-masker", help="Reference-video masking: pose | sam2."),
     auto: bool = typer.Option(False, "--auto", help="Auto-select backend from available VRAM."),
 ) -> None:
     """Run the full motion transfer pipeline."""
@@ -168,6 +186,8 @@ def run(
             cfg_kwargs["flow_estimator"] = preset_data["flow_estimator"]
         if "segmenter" in preset_data:
             cfg_kwargs["segmenter"] = preset_data["segmenter"]
+        if "reference_masker" in preset_data:
+            cfg_kwargs["reference_masker"] = preset_data["reference_masker"]
 
     if auto:
         cfg_kwargs["backend"] = "auto"
@@ -192,6 +212,8 @@ def run(
         cfg_kwargs["flow_estimator"] = flow_estimator
     if segmenter is not None:
         cfg_kwargs["segmenter"] = segmenter
+    if reference_masker is not None:
+        cfg_kwargs["reference_masker"] = reference_masker
 
     cfg = MotionMirrorConfig(**cfg_kwargs)
 
@@ -218,8 +240,8 @@ def download(
     model: str = typer.Option(
         "all",
         help=(
-            "Model(s) to download: all | dwpose | wan-move | light | fast | extras | "
-            "wan-1.3b-vace | wan-move-fast | sam2 | dwpose-pose | dwpose-det."
+            "Model(s) to download: all | dwpose | wan-move | gguf | light | fast | extras | "
+            "wan-move-gguf | wan-1.3b-vace | wan-move-fast | sam2 | dwpose-pose | dwpose-det."
         ),
     ),
     cache_dir: Optional[Path] = typer.Option(None, help="Override default cache directory."),

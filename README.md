@@ -4,7 +4,7 @@
 
 Motion Mirror is the open-source alternative to Kling AI's Motion Control. Give it a character image and a reference video; it produces an animated video of your character performing the same motion. Everything runs on your machine — no cloud, no API keys, no per-clip fees.
 
-> **Early release** — v0.1 produces real results but has known limitations. See [Known Limitations](#known-limitations) before installing.
+> **Early release** — v0.2a expands Motion Mirror toward consumer hardware with low-VRAM, fast, and experimental GGUF backends. See [Known Limitations](#known-limitations) before installing.
 
 ---
 
@@ -14,7 +14,7 @@ Motion Mirror is the open-source alternative to Kling AI's Motion Control. Give 
 character.png + motion_video.mp4
         │
         ▼
- [1] Segment character     rembg removes background → RGBA mask
+ [1] Segment character     rembg or SAM-2 removes background -> RGBA mask
         │
         ▼
  [2] Extract pose          DWPose-L detects 133 skeleton keypoints per frame
@@ -23,10 +23,11 @@ character.png + motion_video.mp4
  [3] Synthesize trajectory 3-layer dense point tracks:
                            Layer 1 — skeleton anchors
                            Layer 2 — Gaussian-falloff interpolation
-                           Layer 3 — optical flow (non-rigid: hair, clothing)
+                           Layer 3 — optical flow (Farneback or RAFT)
         │
         ▼
- [4] Generate video        Wan2.1-I2V-14B via diffusers
+ [4] Generate video        wan-move-14b, wan-move-fast,
+                           wan-move-gguf, wan-1.3b-vace, or mock
         │
         ▼
  [5] Passthrough audio     Original audio muxed into output
@@ -41,7 +42,7 @@ character.png + motion_video.mp4
 
 | Component | Minimum | Recommended |
 |---|---|---|
-| GPU VRAM | 24 GB (RTX 3090 / 4090) | 32 GB+ (RTX 5090, A100) |
+| GPU VRAM | 8 GB for `wan-1.3b-vace` | 24 GB+ for fast/full backends |
 | System RAM | 32 GB | 64 GB |
 | Disk space | 50 GB free | 80 GB free |
 | CUDA | 12.x | 12.x |
@@ -49,7 +50,7 @@ character.png + motion_video.mp4
 
 CPU-only mode is not supported for real generation (mock mode works for testing).
 
-> **VRAM note:** The 14B model uses sequential layer-by-layer CPU offloading, so it runs on 24–32 GB VRAM cards. System RAM is used as overflow storage during inference.
+> **VRAM note:** `--auto` chooses from free CUDA VRAM: 8-12 GB uses `wan-1.3b-vace`, 16-24 GB uses experimental `wan-move-gguf`, 24-40 GB uses `wan-move-fast`, and 40 GB+ uses `wan-move-14b`.
 
 ---
 
@@ -79,14 +80,39 @@ pip install motion-mirror[cuda]
 pip install "diffusers>=0.33" transformers accelerate ftfy
 ```
 
-### 4. Download model weights (~28 GB total)
+Optional v0.2a runtimes:
+
+```bash
+# LightX2V fast backend
+pip install -e ".[lightx2v]"
+
+# Experimental GGUF backend
+pip install -e ".[gguf]"
+
+# SAM-2 segmenter / reference-video masker
+pip install git+https://github.com/facebookresearch/sam2.git
+```
+
+### 4. Download model weights
 
 ```bash
 # Wan2.1-I2V-14B generation model (~28 GB, diffusers format)
 motion-mirror download --model wan-move
 
+# Experimental Wan2.1-I2V-14B GGUF transformer (~12 GB)
+motion-mirror download --model gguf
+
+# Wan2.1-VACE-1.3B low-VRAM backend
+motion-mirror download --model wan-1.3b-vace
+
+# LightX2V 4-step fast backend assets
+motion-mirror download --model fast
+
 # DWPose-L pose estimation (~350 MB)
 motion-mirror download --model dwpose
+
+# SAM-2 segmenter / reference-video masker
+motion-mirror download --model sam2
 ```
 
 Downloads go to `~/.cache/motion-mirror/`. A disk-space check runs before each download.
@@ -102,12 +128,24 @@ motion-mirror run character.png motion.mp4
 # High quality (1280×720, density 1024)
 motion-mirror run character.png motion.mp4 --preset hq
 
+# Let Motion Mirror pick from available CUDA VRAM
+motion-mirror run character.png motion.mp4 --auto
+
+# Low-VRAM v0.2a path
+motion-mirror run character.png motion.mp4 \
+  --backend wan-1.3b-vace \
+  --offload-model \
+  --t5-cpu
+
 # Explicit options
 motion-mirror run character.png motion.mp4 \
-  --backend wan-move-14b \
+  --backend wan-move-gguf \
   --resolution 832x480 \
   --frames 81 \
   --density 512 \
+  --flow-estimator raft \
+  --segmenter sam2 \
+  --reference-masker sam2 \
   --device cuda \
   --output-dir ./my_outputs
 
@@ -132,6 +170,21 @@ Commands:
   ui         Launch the Gradio web UI
 ```
 
+### v0.2a public options
+
+```bash
+motion-mirror run character.png motion.mp4 \
+  --backend wan-move-14b|wan-move-fast|wan-move-gguf|wan-1.3b-vace|mock|auto \
+  --auto \
+  --offload-model \
+  --t5-cpu \
+  --flow-estimator raft \
+  --segmenter sam2 \
+  --reference-masker sam2
+```
+
+`wan-move-gguf` and `--reference-masker sam2` are experimental until real GPU validation is complete. Non-GPU CI covers their config, CLI, routing, and mocked backend contracts.
+
 ### Presets
 
 ```bash
@@ -143,6 +196,9 @@ motion-mirror presets --list
 | `default` | 832×480 | 81 | 512 | Standard quality |
 | `hq` | 1280×720 | 81 | 1024 | Higher quality, more VRAM |
 | `mock` | 64×32 | 3 | 16 | For testing without GPU |
+| `low-vram` | 832×480 | 81 | 512 | `wan-1.3b-vace` with offload/T5 CPU |
+| `fast` | 832×480 | 81 | 512 | true LightX2V 4-step backend |
+| `gguf` | 832×480 | 81 | 512 | experimental GGUF-quantized Wan backend |
 
 ### Benchmark
 
@@ -160,10 +216,15 @@ from pathlib import Path
 from motion_mirror import MotionMirrorPipeline, MotionMirrorConfig
 
 cfg = MotionMirrorConfig(
-    backend="wan-move-14b",
+    backend="wan-1.3b-vace",
     resolution="832x480",
     num_frames=81,
     trajectory_density=512,
+    offload_model=True,
+    t5_cpu=True,
+    flow_estimator="raft",
+    segmenter="sam2",
+    reference_masker="sam2",
     device="cuda",
 )
 
@@ -199,14 +260,17 @@ All exceptions inherit from `MotionMirrorError`.
 
 ## Known Limitations
 
-**Identity drift (v0.1 — 14B backend)**
+**Identity drift (v0.2a — Wan backends)**
 The character's face in the output may not closely match the input photo, especially during large head movements or fast motion. This is a fundamental property of the Wan2.1-I2V-14B model, which has no explicit face-identity conditioning. Identity preservation is tracked for v0.3 via reward-guided optimization (IPRO).
 
 **Single-person only**
 Multi-person reference videos raise `MultiplePeopleDetectedError`. Crop to one person, or use `--person-index N` (planned for v0.2).
 
-**24 GB+ GPU required**
-The 14B model requires at minimum an RTX 3090 or 4090. Sequential CPU offloading is used automatically — system RAM absorbs model layers not currently in use, so 32 GB+ system RAM is recommended alongside 24 GB+ VRAM.
+**Backend maturity varies**
+`wan-1.3b-vace`, `wan-move-fast`, `wan-move-gguf`, RAFT, and SAM-2 options are v0.2a accessibility features. `wan-move-gguf` and SAM-2 reference-video propagation are experimental until real GPU validation is complete.
+
+**8 GB+ GPU required for real generation**
+The 1.3B VACE backend targets 8-12 GB GPUs. The 14B full backend still requires much larger cards. CPU offloading uses system RAM as overflow storage during inference.
 
 **~28 GB model download**
 First run requires downloading ~28 GB (Wan2.1-I2V) + ~350 MB (DWPose). A fast internet connection and ~50 GB free disk space are needed.
@@ -230,8 +294,8 @@ End-to-end GPU tests (6/6 passing) verified on:
 
 | Version | Focus | Key additions |
 |---|---|---|
-| **v0.1** *(current)* | End-to-end pipeline | 14B backend, trajectory synthesis, CLI, UI |
-| **v0.2a** | Hardware accessibility | 1.3B + ControlNet (8–12 GB), LightX2V 4-step, GGUF quantization |
+| **v0.1** | End-to-end pipeline | 14B backend, trajectory synthesis, CLI, UI |
+| **v0.2a** *(current)* | Hardware accessibility | 1.3B VACE, LightX2V 4-step, GGUF backend, RAFT/SAM-2 options |
 | **v0.2b** | Identity + ecosystem | Concat-ID (1.3B), ComfyUI nodes |
 | **v0.3** | Quality | IPRO 14B identity, CodeFormer, RIFE interpolation, CI benchmarks |
 | **v0.4** | Community | LoRA fine-tuning, batch mode, docs site |
@@ -252,7 +316,7 @@ pytest -m "not gpu" -v
 pytest -m gpu -v
 ```
 
-CI runs `pytest -m "not gpu"` on every push via GitHub Actions (128 tests, no GPU required).
+CI runs `pytest -m "not gpu"` on every push via GitHub Actions. GPU tests are separate/manual because they require CUDA hardware and model weights.
 
 ---
 

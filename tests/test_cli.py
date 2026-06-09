@@ -63,6 +63,7 @@ def test_run_help_documents_v02a_public_surface():
         "wan-move-gguf",
         "wan-move-fast",
         "wan-1.3b-vace",
+        "wan-1.3b-concat-id",
         "--auto",
         "--offload-model",
         "--t5-cpu",

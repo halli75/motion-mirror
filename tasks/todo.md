@@ -85,3 +85,27 @@
 - Full non-GPU suite: `pytest -m "not gpu" -q --tb=short` passed (`206 passed, 9 deselected, 22 warnings`).
 - Compile check for changed Python files: passed.
 - `git diff --check`: passed with Windows line-ending warnings only.
+
+---
+
+# Motion Mirror v0.2b Start
+
+## Concat-ID Compatibility Spike
+- Researched the public Concat-ID Wan release and treated it as a separate backend because it targets `Wan2.1-T2V-1.3B` through DiffSynth-style runtime code, not `WanVACEPipeline`.
+- Added the experimental backend `wan-1.3b-concat-id` with lazy runtime imports, asset checks, and clear missing dependency/weight errors.
+- Added `identity` preset and `concat-id` / `identity` download groups.
+- Updated README, docs, UI, CLI, and third-party license notes to keep Concat-ID GPU validation pending.
+
+## ComfyUI Scaffold
+- Added `comfyui_nodes/` with `MotionMirrorPoseExtract`, `MotionMirrorTrajectoryGen`, and `MotionMirrorGenerate`.
+- Routed generation through `comfyui_nodes/model_management.py` so future backend loading can cooperate with ComfyUI model-management hooks.
+- Kept `MotionMirrorFaceRestore` out of scope for v0.2b.
+
+## v0.2b Verification
+- Targeted v0.2b tests: `pytest tests/test_concat_id.py tests/test_config_v02a.py tests/test_cli.py tests/test_comfyui_nodes.py tests/test_ui.py -q --tb=short` passed (`54 passed, 5 warnings`).
+- Full non-GPU suite: `pytest -m "not gpu" -q --tb=short` passed (`214 passed, 9 deselected, 22 warnings`).
+- Compile check for changed Python files: passed.
+- `git diff --check`: passed with Windows line-ending warnings only.
+- `python -m build --wheel`: passed and included `motion_mirror/presets/identity.toml`.
+- Clean wheel smoke with `PYTHONPATH` cleared: `motion-mirror --help`, `motion-mirror presets --list`, and `motion-mirror download --help` passed.
+- Real GPU validation remains deferred for v0.2a hardware claims and v0.2b Concat-ID identity comparison.

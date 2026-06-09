@@ -1,0 +1,9 @@
+[preset]
+name = "identity"
+description = "Experimental Concat-ID Wan2.1-T2V-1.3B identity backend"
+backend = "wan-1.3b-concat-id"
+resolution = "832x480"
+num_frames = 81
+trajectory_density = 512
+offload_model = true
+t5_cpu = true

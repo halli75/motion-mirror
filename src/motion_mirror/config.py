@@ -10,6 +10,7 @@ BackendName = Literal[
     "wan-move-fast",
     "wan-move-gguf",
     "wan-1.3b-vace",
+    "wan-1.3b-concat-id",
     "controlnet",
     "mock",
 ]
@@ -29,6 +30,7 @@ class MotionMirrorConfig:
     # "wan-move-fast" - LightX2V 4-step Wan2.1 I2V fast backend
     # "wan-move-gguf" - experimental GGUF-quantized Wan I2V via Diffusers
     # "wan-1.3b-vace" - 1.3B VACE, ~8 GB VRAM
+    # "wan-1.3b-concat-id" - experimental 1.3B identity backend
     # "controlnet"    - deprecated alias for "wan-1.3b-vace"
     # "mock"          - solid-colour video, no GPU required
     backend: BackendName = "wan-move-14b"

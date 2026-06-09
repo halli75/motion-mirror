@@ -14,11 +14,13 @@ from .extract.reference_mask import (
 from .extract.render_skeleton import render_skeleton_conditioning_artifacts
 from .extract.segment import segment_subject
 from .extract.trajectory import synthesize_trajectory
+from .generate.concat_id import generate_with_concat_id
 from .generate.controlnet import generate_with_controlnet
 from .generate.models import GenerationRequest
 from .generate.wan_move import generate_with_wan_move
 from .hardware import auto_config
 from .postprocess.audio import passthrough_audio
+from .types import PoseSequence, TrajectoryMap
 
 
 @dataclass(slots=True)
@@ -41,8 +43,16 @@ class MotionMirrorPipeline:
         self,
         image_path: Path,
         motion_video_path: Path,
+        *,
+        pose: PoseSequence | None = None,
+        trajectory: TrajectoryMap | None = None,
     ) -> PipelineRunResult:
-        """Run the full motion transfer pipeline."""
+        """Run the full motion transfer pipeline.
+
+        ``pose`` and ``trajectory`` accept precomputed artifacts (e.g. from the
+        ComfyUI PoseExtract / TrajectoryGen nodes) so the corresponding
+        extraction stages are skipped.
+        """
         cfg = self.config
 
         if cfg.backend == "auto":
@@ -61,6 +71,7 @@ class MotionMirrorPipeline:
             "wan-move-fast",
             "wan-move-gguf",
             "wan-1.3b-vace",
+            "wan-1.3b-concat-id",
             "mock",
         }
         if cfg.backend not in valid_backends:
@@ -77,7 +88,8 @@ class MotionMirrorPipeline:
         cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
         seg = segment_subject(image_path, cfg)
-        pose = extract_pose(motion_video_path, cfg)
+        if pose is None:
+            pose = extract_pose(motion_video_path, cfg)
         reference_masks = None
         if cfg.reference_masker == "sam2":
             reference_masks = propagate_reference_masks(motion_video_path, pose, cfg)
@@ -107,13 +119,16 @@ class MotionMirrorPipeline:
                     num_frames=cfg.num_frames,
                 )
 
-        traj = synthesize_trajectory(
-            pose,
-            seg,
-            motion_video_path,
-            cfg,
-            reference_masks=reference_masks,
-        )
+        if trajectory is None:
+            traj = synthesize_trajectory(
+                pose,
+                seg,
+                motion_video_path,
+                cfg,
+                reference_masks=reference_masks,
+            )
+        else:
+            traj = trajectory
         traj_path = cfg.output_dir / "trajectory.npz"
         traj.save(traj_path)
 
@@ -123,6 +138,7 @@ class MotionMirrorPipeline:
             output_path=cfg.output_dir / "generated.mp4",
             conditioning_video_path=conditioning_video_path,
             conditioning_mask_path=conditioning_mask_path,
+            identity_image_path=image_path,
             backend=cfg.backend,
             resolution=cfg.resolution,
             frames=cfg.num_frames,
@@ -131,6 +147,8 @@ class MotionMirrorPipeline:
 
         if cfg.backend in ("wan-move-14b", "wan-move-fast", "wan-move-gguf", "mock"):
             gen = generate_with_wan_move(gen_request, cfg)
+        elif cfg.backend == "wan-1.3b-concat-id":
+            gen = generate_with_concat_id(gen_request, cfg)
         else:
             gen = generate_with_controlnet(gen_request, cfg)
 

@@ -77,6 +77,8 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Repo root on sys.path so the top-level comfyui_nodes package imports in tests.
+pythonpath = ["."]
 markers = [
   "gpu: marks tests requiring a CUDA GPU (deselect with -m 'not gpu')",
   "slow: marks tests that take more than 30 seconds",

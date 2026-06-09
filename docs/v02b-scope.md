@@ -12,13 +12,12 @@ results.
 
 ## Concat-ID Spike
 
-Concat-ID targets Wan2.1 1.3B identity conditioning. The first task is a
-compatibility spike:
+Concat-ID targets Wan2.1 1.3B identity conditioning. The compatibility spike
+found that the public Wan release is based on `Wan2.1-T2V-1.3B` and a
+DiffSynth-style runtime, not `WanVACEPipeline`. v0.2b therefore keeps it as the
+separate experimental backend `wan-1.3b-concat-id`.
 
-1. Verify whether Concat-ID can augment the current `WanVACEPipeline` path.
-2. If it cannot, ship identity as a separate experimental backend instead of
-   mixing it into VACE.
-3. Keep backend naming explicit, for example `wan-1.3b-concat-id`.
+See `docs/v02b-identity-backend.md` for the decision note.
 
 Likely files:
 

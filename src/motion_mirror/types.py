@@ -50,6 +50,26 @@ class PoseSequence:
     frame_size: tuple[int, int]  # (W, H)
     fps: float
 
+    def save(self, path: Path) -> None:
+        np.savez_compressed(
+            path,
+            keypoints=self.keypoints,
+            frame_w=np.array(self.frame_size[0]),
+            frame_h=np.array(self.frame_size[1]),
+            fps=np.array(self.fps),
+            source_video_path=np.array(str(self.source_video_path)),
+        )
+
+    @classmethod
+    def load(cls, path: Path) -> PoseSequence:
+        data = np.load(path)
+        return cls(
+            source_video_path=Path(str(data["source_video_path"])),
+            keypoints=data["keypoints"],
+            frame_size=(int(data["frame_w"]), int(data["frame_h"])),
+            fps=float(data["fps"]),
+        )
+
 
 @dataclass(slots=True)
 class TrajectoryMap:

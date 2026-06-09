@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "motion-mirror"
-version = "0.2a0"
+version = "0.2b0"
 description = "Local-first motion transfer pipeline for animating a character image from a reference video."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -57,6 +57,11 @@ lightx2v = [
   "lightx2v @ git+https://github.com/ModelTC/LightX2V.git",
   "pyzmq>=26",
 ]
+concat-id = [
+  "torch>=2.2",
+  "diffsynth",
+  "Pillow",
+]
 
 [project.scripts]
 motion-mirror = "motion_mirror.cli:app"
@@ -72,6 +77,8 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Repo root on sys.path so the top-level comfyui_nodes package imports in tests.
+pythonpath = ["."]
 markers = [
   "gpu: marks tests requiring a CUDA GPU (deselect with -m 'not gpu')",
   "slow: marks tests that take more than 30 seconds",

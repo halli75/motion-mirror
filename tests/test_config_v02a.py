@@ -25,6 +25,7 @@ def test_config_new_backends():
         "wan-move-fast",
         "wan-move-gguf",
         "wan-1.3b-vace",
+        "wan-1.3b-concat-id",
         "controlnet",
         "mock",
     ):
@@ -219,6 +220,54 @@ def test_pipeline_gguf_backend_routes_to_wan_generator(tmp_path):
     controlnet_mock.assert_not_called()
 
 
+def test_pipeline_concat_id_backend_routes_to_identity_generator(tmp_path):
+    from motion_mirror.pipeline import MotionMirrorPipeline
+
+    img_path = tmp_path / "char.png"
+    img_path.write_bytes(b"fake-image")
+    vid_path = tmp_path / "motion.mp4"
+    vid_path.write_bytes(b"fake-video")
+
+    cfg = MotionMirrorConfig(
+        backend="wan-1.3b-concat-id",
+        resolution="64x32",
+        num_frames=4,
+        trajectory_density=16,
+        device="cpu",
+        project_root=tmp_path,
+    )
+
+    fake_seg = MagicMock()
+    fake_seg.rgba_path = tmp_path / "segmented.png"
+    fake_seg.rgba_path.touch()
+    fake_pose = MagicMock()
+    fake_traj = MagicMock()
+    fake_traj.save = MagicMock()
+    fake_gen = MagicMock()
+    fake_gen.video_path = tmp_path / "generated.mp4"
+    fake_gen.video_path.touch()
+    final_path = tmp_path / "result.mp4"
+    final_path.touch()
+
+    with (
+        patch("motion_mirror.pipeline.segment_subject", return_value=fake_seg),
+        patch("motion_mirror.pipeline.extract_pose", return_value=fake_pose),
+        patch("motion_mirror.pipeline.synthesize_trajectory", return_value=fake_traj),
+        patch("motion_mirror.pipeline.generate_with_concat_id", return_value=fake_gen) as gen_mock,
+        patch("motion_mirror.pipeline.generate_with_wan_move") as wan_mock,
+        patch("motion_mirror.pipeline.generate_with_controlnet") as controlnet_mock,
+        patch("motion_mirror.pipeline.passthrough_audio", return_value=final_path),
+    ):
+        result = MotionMirrorPipeline(cfg).run(img_path, vid_path)
+
+    req = gen_mock.call_args.args[0]
+    assert req.backend == "wan-1.3b-concat-id"
+    assert req.identity_image_path == img_path
+    assert result.output_path == final_path
+    wan_mock.assert_not_called()
+    controlnet_mock.assert_not_called()
+
+
 def test_pipeline_reference_masker_sam2_threads_reference_masks(tmp_path):
     from motion_mirror.pipeline import MotionMirrorPipeline
 
@@ -353,7 +402,7 @@ def test_pipeline_new_backends_in_valid_set(tmp_path):
         writer.write(rng.integers(0, 200, (64, 64, 3), dtype=np.uint8))
     writer.release()
 
-    for backend in ("wan-move-fast", "wan-move-gguf", "wan-1.3b-vace"):
+    for backend in ("wan-move-fast", "wan-move-gguf", "wan-1.3b-vace", "wan-1.3b-concat-id"):
         cfg = MotionMirrorConfig(
             backend=backend,
             resolution="64x32",
@@ -378,6 +427,7 @@ def test_cli_presets_list_shows_new_presets():
     assert "low-vram" in out
     assert "fast" in out
     assert "gguf" in out
+    assert "identity" in out
 
 
 def test_cli_download_help_shows_new_groups():
@@ -389,6 +439,7 @@ def test_cli_download_help_shows_new_groups():
     assert result.exit_code == 0
     assert "light" in result.output or "wan-1.3b" in result.output
     assert "gguf" in result.output or "wan-move-gguf" in result.output
+    assert "identity" in result.output or "concat-id" in result.output
 
 
 def test_cli_fast_download_spec_uses_lightx2v_assets():
@@ -414,6 +465,20 @@ def test_cli_gguf_download_spec_uses_single_transformer_asset():
     assert spec["required_paths"] == ["wan2.1-i2v-14b-480p-Q4_K_M.gguf"]
 
 
+def test_cli_concat_id_download_spec_uses_t2v_and_adapter_assets():
+    from motion_mirror.cli import _MODEL_GROUPS, _MODEL_SPECS
+
+    assert _MODEL_GROUPS["identity"] == ["wan-1.3b-concat-id"]
+    assert _MODEL_GROUPS["concat-id"] == ["wan-1.3b-concat-id"]
+    spec = _MODEL_SPECS["wan-1.3b-concat-id"]
+    assert spec["cache_subdir"] == "wan-1.3b-concat-id"
+    assert "second_stage_adaln.pt" in spec["required_paths"]
+    assert "antelopev2" in spec["required_paths"]
+    repo_ids = {source["repo_id"] for source in spec["sources"]}
+    assert "Wan-AI/Wan2.1-T2V-1.3B" in repo_ids
+    assert "yongzhong/Concat-ID-Wan" in repo_ids
+
+
 def test_cli_run_help_shows_new_flags():
     from motion_mirror.cli import app
     from typer.testing import CliRunner
@@ -428,4 +493,5 @@ def test_cli_run_help_shows_new_flags():
     assert "--segmenter" in out
     assert "--reference-masker" in out
     assert "--auto" in out
+    assert "wan-1.3b-concat-id" in out
     assert "wan-move-gguf" in out

@@ -20,6 +20,7 @@ from .generate.models import GenerationRequest
 from .generate.wan_move import generate_with_wan_move
 from .hardware import auto_config
 from .postprocess.audio import passthrough_audio
+from .types import PoseSequence, TrajectoryMap
 
 
 @dataclass(slots=True)
@@ -42,8 +43,16 @@ class MotionMirrorPipeline:
         self,
         image_path: Path,
         motion_video_path: Path,
+        *,
+        pose: PoseSequence | None = None,
+        trajectory: TrajectoryMap | None = None,
     ) -> PipelineRunResult:
-        """Run the full motion transfer pipeline."""
+        """Run the full motion transfer pipeline.
+
+        ``pose`` and ``trajectory`` accept precomputed artifacts (e.g. from the
+        ComfyUI PoseExtract / TrajectoryGen nodes) so the corresponding
+        extraction stages are skipped.
+        """
         cfg = self.config
 
         if cfg.backend == "auto":
@@ -79,7 +88,8 @@ class MotionMirrorPipeline:
         cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
         seg = segment_subject(image_path, cfg)
-        pose = extract_pose(motion_video_path, cfg)
+        if pose is None:
+            pose = extract_pose(motion_video_path, cfg)
         reference_masks = None
         if cfg.reference_masker == "sam2":
             reference_masks = propagate_reference_masks(motion_video_path, pose, cfg)
@@ -109,13 +119,16 @@ class MotionMirrorPipeline:
                     num_frames=cfg.num_frames,
                 )
 
-        traj = synthesize_trajectory(
-            pose,
-            seg,
-            motion_video_path,
-            cfg,
-            reference_masks=reference_masks,
-        )
+        if trajectory is None:
+            traj = synthesize_trajectory(
+                pose,
+                seg,
+                motion_video_path,
+                cfg,
+                reference_masks=reference_masks,
+            )
+        else:
+            traj = trajectory
         traj_path = cfg.output_dir / "trajectory.npz"
         traj.save(traj_path)
 

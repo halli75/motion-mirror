@@ -26,6 +26,18 @@ def throw_if_interrupted() -> None:
         hook()
 
 
+def maybe_throw_if_interrupted() -> None:
+    """Like throw_if_interrupted, but a no-op outside a ComfyUI environment.
+
+    The extraction nodes are CPU-capable and useful standalone, so they only
+    honour the interrupt hook when ComfyUI is actually present.
+    """
+    try:
+        throw_if_interrupted()
+    except RuntimeError:
+        pass
+
+
 def run_motion_mirror_generation(
     *,
     image_path: str,
@@ -35,9 +47,15 @@ def run_motion_mirror_generation(
     frames: int,
     density: int,
     device: str,
+    pose_path: str = "",
+    trajectory_path: str = "",
 ) -> tuple[str]:
     throw_if_interrupted()
     from motion_mirror import MotionMirrorConfig, MotionMirrorPipeline
+    from motion_mirror.types import PoseSequence, TrajectoryMap
+
+    pose = PoseSequence.load(Path(pose_path)) if pose_path else None
+    trajectory = TrajectoryMap.load(Path(trajectory_path)) if trajectory_path else None
 
     config = MotionMirrorConfig(
         backend=backend,
@@ -49,6 +67,8 @@ def run_motion_mirror_generation(
     result = MotionMirrorPipeline(config).run(
         Path(image_path),
         Path(motion_video_path),
+        pose=pose,
+        trajectory=trajectory,
     )
     throw_if_interrupted()
     return (str(result.output_path),)

@@ -1,16 +1,22 @@
 # Motion Mirror ComfyUI Nodes
 
-This directory is the initial v0.2b ComfyUI custom-node scaffold.
+This directory is the v0.2b ComfyUI custom-node package.
 
 ## Nodes
 
-- `MotionMirrorPoseExtract`
-- `MotionMirrorTrajectoryGen`
-- `MotionMirrorGenerate`
+- `MotionMirrorPoseExtract` — runs DWPose extraction on the motion video and
+  outputs a pose artifact path (`.npz`). CPU-capable.
+- `MotionMirrorTrajectoryGen` — loads the pose artifact, segments the character
+  image, synthesizes the dense trajectory map, and outputs a trajectory
+  artifact path (`.npz`). CPU-capable.
+- `MotionMirrorGenerate` — runs generation. Accepts optional `pose_path` and
+  `trajectory_path` inputs from the nodes above so extraction is not repeated;
+  when omitted it runs the full pipeline end-to-end.
 
 `MotionMirrorGenerate` routes through `comfyui_nodes/model_management.py` so
 future Wan and Concat-ID model loading can cooperate with ComfyUI's model
-management hooks instead of allocating CUDA memory directly.
+management hooks instead of allocating CUDA memory directly. Intermediate
+artifacts are written under ComfyUI's output directory (`motion_mirror/`).
 
 ## Install
 
@@ -29,5 +35,5 @@ pip install -e ".[concat-id]"
 
 ## Scope
 
-This is scaffolding only. Real GPU workflow validation is deferred. Do not add a
+Real GPU workflow validation is deferred. Do not add a
 `MotionMirrorFaceRestore` node in v0.2b; CodeFormer belongs to v0.3 scope.

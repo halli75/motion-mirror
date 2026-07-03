@@ -3,14 +3,16 @@
 Muxes the audio stream from the reference motion video into the generated
 video using ffmpeg (via static-ffmpeg + ffmpeg-python).
 
-If the source video has no audio stream, the generated video is returned
-as-is without re-encoding.
+If the source video has no audio stream, the generated video is copied to
+the output path without re-encoding, so callers always receive the same
+canonical path regardless of whether the source had audio.
 
 static_ffmpeg.add_paths() is called at module load so that the bundled
 ffmpeg binary is on PATH before any ffmpeg-python calls.
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 try:
@@ -69,12 +71,15 @@ def passthrough_audio(
         s.get("codec_type") == "audio" for s in probe.get("streams", [])
     )
 
-    if not has_audio:
-        # No audio to copy — return generated video unchanged
-        return generated_video_path
-
     out = output_path or (generated_video_path.parent / "final.mp4")
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    if not has_audio:
+        # No audio to copy — deliver the generated video at the canonical
+        # output path (keep generated_video_path intact as evidence).
+        if out != generated_video_path:
+            shutil.copyfile(generated_video_path, out)
+        return out
 
     try:
         video_in = ffmpeg.input(str(generated_video_path))

@@ -105,15 +105,21 @@ fi
 # the import and fall back to the other ABI. Best-effort: fast smoke is skipped
 # if neither works.
 if [ "$ROLE" = a ]; then
+  # --no-deps is critical: without it pip reinstalls flash-attn's `torch`
+  # dependency and clobbers the image's CUDA build, breaking cuda for ALL
+  # backends. einops (its other dep) is already present via diffusers.
   fa_base="https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3.post1"
   fa_ok=false
   for abi in abiTRUE abiFALSE; do
     whl="flash_attn-2.8.3.post1+cu12torch2.8cxx11${abi}-cp311-cp311-linux_x86_64.whl"
-    python3 -m pip install "$fa_base/$whl" || continue
+    python3 -m pip install --no-deps "$fa_base/$whl" || continue
     if python3 -c "import flash_attn" 2>/dev/null; then fa_ok=true; break; fi
     python3 -m pip uninstall -y flash-attn >/dev/null 2>&1
   done
   $fa_ok || record_failure "flash-attn install (fast backend may fail)"
+  # Guarantee the extras' CUDA torch is intact regardless of the above.
+  python3 -c "import torch; assert torch.cuda.is_available()" \
+    || record_failure "torch CUDA broken after flash-attn attempt"
 fi
 if ! python3 -c "import torch; assert torch.cuda.is_available(), 'CUDA gone after installs'"; then
   record_failure "torch CUDA sanity check failed after pip installs"

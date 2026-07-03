@@ -2,13 +2,13 @@
   "trim_seconds": 6.0,
   "transcode": "h264 mp4 (pipeline accepts .mp4/.mov/.avi/.mkv only)",
   "video": {
-    "title": "Chinese man dancing.webm",
-    "url": "https://upload.wikimedia.org/wikipedia/commons/0/0e/Chinese_man_dancing.webm",
-    "license": "CC BY-SA 4.0",
-    "sha256": "047c24c3e3bff075eaaf38e1f1e776f5e89f04d88d208126d5541fc5d3fdacd5",
-    "local_file": "Chinese_man_dancing.webm",
-    "note": "1 person on 5 frames in [0.0,6.0]s, fps=29.9",
-    "trim_start_seconds": 0.0
+    "title": "Pli\u00e9, ballet technique tutorial.webm",
+    "url": "https://upload.wikimedia.org/wikipedia/commons/6/60/Pli%C3%A9%2C_ballet_technique_tutorial.webm",
+    "license": "CC BY-SA 3.0",
+    "sha256": "60385318167fdf58b8ae6883d0638fc9c179ef073d969d10fcc51a9f48740e75",
+    "local_file": "Pli%C3%A9%2C_ballet_technique_tutorial.webm",
+    "note": "pipeline-exact: 1 person, window [4,10]s, fps=30.0",
+    "trim_start_seconds": 4.0
   },
   "image": {
     "title": "Ballet dancer in Matosinhos (Unsplash).jpg",
@@ -16,7 +16,7 @@
     "license": "CC0",
     "sha256": "b4fc67dca0df5bfe0965209074e265d359bc31345e9740a2ce909d60b4cd1620",
     "local_file": "Ballet_dancer_in_Matosinhos_%28Unsplash%29.jpg",
-    "note": "1 person, bbox height 0.46",
+    "note": "1 person, bbox area 0.40",
     "trim_start_seconds": 0.0
   }
 }

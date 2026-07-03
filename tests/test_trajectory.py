@@ -22,6 +22,7 @@ from motion_mirror.extract.trajectory import (
     _build_nonrigid_mask,
     _layer1_skeleton_tracks,
     _layer2_interpolated_tracks,
+    _layer3_flow_tracks,
     _select_video_body_mask,
 )
 from motion_mirror.extract.trajectory import synthesize_trajectory
@@ -217,6 +218,37 @@ def test_layer1_rightward_drift():
     assert np.all(np.diff(mean_x) > 0), f"Expected monotonic rightward drift: {mean_x}"
 
 
+def test_layer1_holds_last_confident_position_through_occlusion():
+    """An occluded frame (low conf, garbage coords) must hold the previous
+    confident position instead of emitting the raw (0,0) coordinate."""
+    num_frames = 3
+    char_size = (128, 128)
+    kps = np.zeros((num_frames, 133, 3), dtype=np.float32)
+    kps[0, 0] = [40.0, 50.0, 0.9]
+    kps[1, 0] = [0.0, 0.0, 0.05]   # occluded: detector emits (0,0)
+    kps[2, 0] = [46.0, 50.0, 0.9]
+    M = np.eye(3, dtype=np.float64)
+    tracks = _layer1_skeleton_tracks(kps, M, char_size)
+    assert tracks.shape[1] == 1
+    assert not np.allclose(tracks[1, 0], [0.0, 0.0]), (
+        f"Occluded frame leaked raw low-confidence coords: {tracks[1, 0]}"
+    )
+    np.testing.assert_allclose(tracks[1, 0], tracks[0, 0])
+
+
+def test_layer1_backfills_leading_occlusion():
+    """A leading occluded frame is back-filled from the first confident frame."""
+    num_frames = 3
+    char_size = (128, 128)
+    kps = np.zeros((num_frames, 133, 3), dtype=np.float32)
+    kps[0, 0] = [0.0, 0.0, 0.05]   # occluded before first detection
+    kps[1, 0] = [40.0, 50.0, 0.9]
+    kps[2, 0] = [42.0, 50.0, 0.9]
+    M = np.eye(3, dtype=np.float64)
+    tracks = _layer1_skeleton_tracks(kps, M, char_size)
+    np.testing.assert_allclose(tracks[0, 0], tracks[1, 0])
+
+
 def test_layer1_no_confident_keypoints_returns_centre():
     """Degenerate case: all keypoints below confidence threshold → centre track."""
     num_frames = 3
@@ -254,6 +286,47 @@ def test_layer2_values_in_unit_range():
     result = _layer2_interpolated_tracks(layer1, mask, density=32)
     assert result.min() >= 0.0
     assert result.max() <= 1.0
+
+
+def test_layer2_gaussian_isotropic_on_nonsquare_frame():
+    """Two seeds equidistant in PIXELS from every anchor must receive equal
+    Gaussian weight on a non-square frame (128x64), i.e. equal displacement."""
+    w, h = 128, 64
+    mask = np.zeros((h, w), dtype=np.uint8)
+    mask[32, 80] = 255   # seed S1: 16 px right of anchor A at (64, 32)
+    mask[48, 64] = 255   # seed S2: 16 px below anchor A
+    # Anchor B at pixel (80, 48) is also 16 px from both seeds
+    layer1 = np.zeros((2, 2, 2), dtype=np.float32)
+    layer1[0, 0] = [64 / w, 32 / h]
+    layer1[0, 1] = [80 / w, 48 / h]
+    layer1[1, 0] = layer1[0, 0] + np.array([0.1, 0.0], dtype=np.float32)  # A moves
+    layer1[1, 1] = layer1[0, 1]                                            # B static
+    result = _layer2_interpolated_tracks(layer1, mask, density=4)  # n2 = 2 seeds
+    disp = result[1] - result[0]  # (2, 2)
+    np.testing.assert_allclose(
+        disp[0], disp[1], atol=1e-6,
+        err_msg=f"Pixel-equidistant seeds got unequal displacement: {disp}",
+    )
+
+
+# ── Layer 3: fallback seed grid ──────────────────────────────────────────────
+
+
+def test_layer3_fallback_seeds_not_collinear():
+    """Empty non-rigid mask → fallback seeds must form a 2D grid, not a diagonal."""
+    fh, fw = 48, 64
+    rng = np.random.default_rng(3)
+    frames = [rng.integers(0, 200, (fh, fw, 3), dtype=np.uint8) for _ in range(2)]
+    subject_mask = np.zeros((fh, fw), dtype=np.uint8)  # empty → fallback path
+    M = np.eye(3, dtype=np.float64)
+    tracks, _ = _layer3_flow_tracks(frames, subject_mask, M, (fw, fh), density=64)
+    seeds = tracks[0]  # (16, 2) frame-0 seed positions
+    x, y = seeds[:, 0], seeds[:, 1]
+    coeffs = np.polyfit(x, y, 1)
+    resid = y - np.polyval(coeffs, x)
+    assert np.abs(resid).max() > 1e-3, (
+        f"Fallback seeds are collinear (diagonal): max residual {np.abs(resid).max()}"
+    )
 
 
 # ── Body transform ────────────────────────────────────────────────────────────

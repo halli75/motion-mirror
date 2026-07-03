@@ -94,3 +94,42 @@ def test_segment_output_dir_created(tmp_path):
     cfg = MotionMirrorConfig(project_root=tmp_path / "deep", backend="mock")
     result = segment_subject(img, cfg)
     assert result.rgba_path.parent.exists()
+
+
+def test_segment_excludes_soft_alpha_halo(tmp_path):
+    """Anti-alias halo pixels (alpha 1..10) must NOT be promoted to solid mask.
+
+    rembg emits a soft alpha edge around the subject; binarising with ``> 0``
+    turns that halo into solid foreground. The mask should keep only genuinely
+    opaque pixels (alpha > 127).
+    """
+    from unittest.mock import patch
+
+    from PIL import Image
+
+    img = _make_png(tmp_path / "char.png", size=(64, 64))
+
+    # Controlled rembg output: solid core (alpha 255) ringed by a soft
+    # anti-alias halo (alpha in 1..10), everything else transparent.
+    rgba = np.zeros((64, 64, 4), dtype=np.uint8)
+    rgba[:, :, 0] = 200                       # arbitrary colour channel
+    rgba[24:40, 24:40, 3] = 255               # solid core
+    rgba[20:44, 20:24, 3] = 3                 # left halo band
+    rgba[20:44, 40:44, 3] = 7                 # right halo band
+    rgba[20:24, 20:44, 3] = 5                 # top halo band
+    rgba[40:44, 20:44, 3] = 10                # bottom halo band
+    fake_out = Image.fromarray(rgba, "RGBA")
+
+    cfg = MotionMirrorConfig(project_root=tmp_path, backend="mock")
+    with patch("rembg.remove", return_value=fake_out), patch(
+        "motion_mirror.extract.segment._get_rembg_session", return_value=None
+    ):
+        result = segment_subject(img, cfg)
+
+    # Solid core stays foreground.
+    assert result.mask[32, 32] == 255
+    # Soft halo bands are excluded.
+    assert result.mask[22, 32] == 0, "top halo leaked into mask"
+    assert result.mask[32, 22] == 0, "left halo leaked into mask"
+    assert result.mask[42, 32] == 0, "bottom halo leaked into mask"
+    assert set(np.unique(result.mask)).issubset({0, 255})

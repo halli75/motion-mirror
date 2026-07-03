@@ -62,6 +62,10 @@ PROVISION_TIMEOUT_S = 15 * 60
 HEARTBEAT_STALL_S = 15 * 60
 
 
+def is_stalled(last_beat_change_ts: float, now: float, threshold: float) -> bool:
+    return now - last_beat_change_ts > threshold
+
+
 def _api_key() -> str:
     key = os.environ.get("RUNPOD_API_KEY")
     if not key:
@@ -106,10 +110,15 @@ def _save_state(state: dict) -> None:
 # ----------------------------------------------------------------- preflight
 
 
+def _fmt_spend_per_hr(value: float | None) -> str:
+    # API returns null when no pods are running
+    return f"{0.0 if value is None else value:.3f}"
+
+
 def preflight() -> None:
     me = gql("query { myself { clientBalance currentSpendPerHr } }")["myself"]
     print(f"balance: ${me['clientBalance']:.2f}  spend/hr (ALL pods): "
-          f"${me['currentSpendPerHr']:.3f}")
+          f"${_fmt_spend_per_hr(me['currentSpendPerHr'])}")
     wanted = sorted({g for r in ROLES.values() for g in r["gpus"]})
     info = gql(
         """query { gpuTypes { id displayName memoryInGb
@@ -359,7 +368,7 @@ def run(role: str, attach_pod_id: str | None = None) -> int:
                     print(f"pod is up (first heartbeat after {now - started:.0f}s)")
                 if beat != last_beat_value:
                     last_beat_value, last_beat_change = beat, now
-            if first_beat is not None and now - last_beat_change > HEARTBEAT_STALL_S:
+            if first_beat is not None and is_stalled(last_beat_change, now, HEARTBEAT_STALL_S):
                 print("heartbeat stalled >15min — salvage + stop")
                 fetch_evidence(pod_id, role)
                 return 6

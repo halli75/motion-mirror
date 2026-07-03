@@ -27,7 +27,16 @@ mkdir -p status evidence evidence/smoke inputs mm-cache "$HF_HOME"
 
 # --- observability first: http server + heartbeat + tee'd console ---
 nohup python3 -m http.server 8000 --directory $WS >$WS/status/http.log 2>&1 &
-( while true; do date -u +%s >$WS/status/heartbeat; sleep 20; done ) &
+# Heartbeat ticks only while console.log is actively growing (progress bars /
+# step logs keep its mtime fresh during real work). A hard hang freezes the
+# log, the heartbeat goes stale, and the orchestrator's stall guard can fire.
+touch $WS/status/console.log
+( while true; do
+    now=$(date -u +%s)
+    log_mtime=$(stat -c %Y $WS/status/console.log 2>/dev/null || echo 0)
+    if [ $((now - log_mtime)) -le 120 ]; then echo "$now" >$WS/status/heartbeat; fi
+    sleep 20
+  done ) &
 exec > >(tee -a $WS/status/console.log) 2>&1
 
 record_failure() {

@@ -6,11 +6,17 @@ from dataclasses import dataclass
 
 from .exceptions import InsufficientVRAMError
 
+# Safety margin over measured peak VRAM.
+_HEADROOM_GB = 1.0
+
 _FULL_MODEL_VRAM_GB = 40.0
 _FAST_MODEL_VRAM_GB = 24.0
-_GGUF_MODEL_VRAM_GB = 16.0
+# Peaks measured in v0.2a GPU validation (RTX 4090/3090, 17-frame smoke,
+# offload_model + t5_cpu): gguf 11.28 GB, vace 8.02 GB.
+_GGUF_MODEL_VRAM_GB = 11.28 + _HEADROOM_GB
+# t5_cpu-only config never GPU-measured — confirm via Wave-2 tier probe.
 _MID_TIER_VRAM_GB = 12.0
-_MIN_VRAM_GB = 8.0
+_MIN_VRAM_GB = 8.02 + _HEADROOM_GB
 
 
 @dataclass(frozen=True)
@@ -72,7 +78,7 @@ def recommend_backend(vram_gb: float) -> tuple[str, dict]:
 
     raise InsufficientVRAMError(
         f"Only {vram_gb:.1f} GB VRAM free. "
-        f"Motion Mirror auto-selection requires at least {_MIN_VRAM_GB:.0f} GB "
+        f"Motion Mirror auto-selection requires at least {_MIN_VRAM_GB:.2f} GB "
         "free VRAM for the lightest backend (wan-1.3b-vace). "
         "Free VRAM by closing other applications and try again.",
         available_gb=vram_gb,
@@ -91,7 +97,7 @@ def auto_config(base: "MotionMirrorConfig") -> "MotionMirrorConfig":  # noqa: F8
     if info is None:
         raise InsufficientVRAMError(
             "backend='auto' requested but no CUDA GPU was detected. "
-            "Auto-selection requires a CUDA GPU with at least 8 GB free VRAM. "
+            f"Auto-selection requires a CUDA GPU with at least {_MIN_VRAM_GB:.2f} GB free VRAM. "
             "Use --backend mock for CPU-only testing.",
             available_gb=0.0,
             required_gb=_MIN_VRAM_GB,

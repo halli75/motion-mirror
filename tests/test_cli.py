@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import cv2
 import numpy as np
 import pytest
 from typer.testing import CliRunner
 
-from motion_mirror.cli import _is_spec_cached, app
+from motion_mirror.cli import _MODEL_SPECS, _is_spec_cached, app
 
 runner = CliRunner()
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -104,6 +106,26 @@ def test_download_cache_rejects_tiny_partial_snapshot(tmp_path):
 
     (cache_dir / "full.bin").write_bytes(b"x" * 100)
     assert _is_spec_cached(cache_dir, spec)
+
+
+def test_wan_move_spec_counts_full_snapshot():
+    spec = _MODEL_SPECS["wan-move"]
+    assert spec["expected_bytes"] == 42_000_000_000
+    assert spec["min_cached_bytes"] == 35_000_000_000
+
+
+def test_download_preflight_rejects_free_space_within_margin(tmp_path):
+    total_needed = _MODEL_SPECS["dwpose-pose"]["expected_bytes"]
+    fake_usage = SimpleNamespace(free=int(total_needed * 1.05))
+    with patch("motion_mirror.cli.shutil.disk_usage", return_value=fake_usage), \
+            patch("huggingface_hub.hf_hub_download") as mock_download:
+        result = runner.invoke(app, [
+            "download", "--model", "dwpose-pose",
+            "--cache-dir", str(tmp_path / "cache"),
+        ])
+    assert result.exit_code == 1, result.output
+    assert "Insufficient disk space" in _plain(result.output)
+    mock_download.assert_not_called()
 
 
 # ── presets ───────────────────────────────────────────────────────────────────

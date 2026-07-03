@@ -80,6 +80,11 @@ def _cache_size_bytes(path: Path) -> int:
     return sum(file.stat().st_size for file in path.rglob("*") if file.is_file())
 
 
+# Safety margin applied to the disk-space preflight: require the free space to
+# exceed the sum of expected download sizes by this factor so a download cannot
+# fill the disk to the brim (temp files, metadata, .incomplete artifacts).
+_DISK_MARGIN = 1.1
+
 _MODEL_SPECS: dict[str, dict] = {
     "dwpose-pose": {
         "repo_id": "yzd-v/DWPose",
@@ -98,10 +103,14 @@ _MODEL_SPECS: dict[str, dict] = {
     "wan-move": {
         "repo_id": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",
         "filename": None,
-        "expected_bytes": 28_000_000_000,
-        "min_cached_bytes": 20_000_000_000,
+        # Full diffusers snapshot ~42 GB: transformer ~28 GB + UMT5-XXL text
+        # encoder ~11 GB + CLIP vision (~2 GB) + VAE (~0.5 GB) + configs.
+        "expected_bytes": 42_000_000_000,
+        # Above the transformer-only size (~28 GB) so a partial snapshot missing
+        # the UMT5-XXL text encoder does NOT get treated as a complete cache.
+        "min_cached_bytes": 35_000_000_000,
         "cache_subdir": "wan-move",
-        "label": "Wan2.1-I2V-14B-720P (diffusers format, ~28 GB) [backend: wan-move-14b]",
+        "label": "Wan2.1-I2V-14B-720P (diffusers format, ~42 GB) [backend: wan-move-14b]",
     },
     "wan-move-gguf": {
         "repo_id": "city96/Wan2.1-I2V-14B-480P-gguf",
@@ -340,16 +349,18 @@ def download(
 
     if not skip_check:
         total_needed = sum(_MODEL_SPECS[key]["expected_bytes"] for key in keys)
+        required_with_margin = int(total_needed * _DISK_MARGIN)
         check_path = cfg.cache_dir
         while not check_path.exists() and check_path != check_path.parent:
             check_path = check_path.parent
         free = shutil.disk_usage(check_path).free
-        if free < total_needed:
-            needed_gb = total_needed / 1024 ** 3
+        if free < required_with_margin:
+            needed_gb = required_with_margin / 1024 ** 3
             free_gb = free / 1024 ** 3
             console.print(
                 f"[red]Insufficient disk space.[/red] "
-                f"Need ~{needed_gb:.1f} GB, have {free_gb:.1f} GB free in {cfg.cache_dir}."
+                f"Need ~{needed_gb:.1f} GB (incl. {_DISK_MARGIN:g}x safety margin), "
+                f"have {free_gb:.1f} GB free in {cfg.cache_dir}."
             )
             raise typer.Exit(code=1)
 

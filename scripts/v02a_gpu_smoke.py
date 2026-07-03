@@ -36,6 +36,8 @@ class SmokeResult:
     readable_mp4: bool
     frame_count: int | None
     peak_cuda_memory_gb: float | None
+    content_ok: bool | None = None
+    content_reason: str | None = None
     error: str | None = None
     traceback: str | None = None
 
@@ -184,6 +186,14 @@ def _run_backend(
         result = MotionMirrorPipeline(cfg).run(image, motion)
         output_path = result.output_path
         readable, frame_count = _probe_video(output_path)
+        # A readable MP4 is necessary but not sufficient — the vace backend once
+        # emitted the pose skeleton and still "passed". Verify the output has
+        # real image content, actually moves, and is not the conditioning
+        # skeleton copied through.
+        control_path = output_dir / "conditioning_pose.mp4"
+        content_ok, content_reason = _check_content(
+            output_path, control_path if control_path.exists() else None
+        )
         peak = (
             round(torch.cuda.max_memory_allocated() / 1024**3, 2)
             if torch.cuda.is_available()
@@ -191,12 +201,14 @@ def _run_backend(
         )
         return SmokeResult(
             backend=backend,
-            ok=output_path.exists() and readable,
+            ok=output_path.exists() and readable and content_ok,
             elapsed_s=round(time.perf_counter() - start, 2),
             output_path=str(output_path),
             readable_mp4=readable,
             frame_count=frame_count,
             peak_cuda_memory_gb=peak,
+            content_ok=content_ok,
+            content_reason=content_reason,
         )
     except Exception as exc:  # pragma: no cover - evidence path for manual GPU runs
         return SmokeResult(
@@ -251,6 +263,70 @@ def _probe_video(path: Path) -> tuple[bool, int | None]:
         return bool(ok), frame_count
     finally:
         cap.release()
+
+
+def _read_frames(path: Path):
+    import numpy as np
+
+    cap = cv2.VideoCapture(str(path))
+    frames = []
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            frames.append(frame)
+    finally:
+        cap.release()
+    return [np.asarray(f, dtype="float32") for f in frames]
+
+
+def _check_content(
+    output_path: Path, control_path: Path | None
+) -> tuple[bool, str]:
+    """Reject degenerate output: solid/near-black, static, or skeleton passthrough.
+
+    A readable MP4 is not evidence of a rendered character. These thresholds are
+    deliberately loose — they catch the gross failure modes (blank, frozen, or the
+    control skeleton copied to the output), not subtle quality issues.
+    """
+    import numpy as np
+
+    frames = _read_frames(output_path)
+    if len(frames) < 2:
+        return False, f"only {len(frames)} frame(s) decoded"
+    stack = np.stack(frames)
+
+    # 1. Real image content: a rendered scene has broad spatial variance and is
+    #    not almost entirely black. The skeleton-on-black failure has mean ~8/255.
+    mean_lum = float(stack.mean())
+    spatial_std = float(stack.reshape(len(frames), -1).std(axis=1).mean())
+    if mean_lum < 20.0:
+        return False, f"near-black output (mean luminance {mean_lum:.1f}/255)"
+    if spatial_std < 12.0:
+        return False, f"low spatial variance (std {spatial_std:.1f}) — likely blank/degenerate"
+
+    # 2. Actually moves: consecutive frames must differ.
+    inter = float(np.abs(np.diff(stack, axis=0)).mean())
+    if inter < 0.5:
+        return False, f"static output (mean inter-frame diff {inter:.2f})"
+
+    # 3. Not the conditioning skeleton copied through.
+    if control_path is not None:
+        control = _read_frames(control_path)
+        n = min(len(control), len(frames))
+        if n:
+            cstack = np.stack(control[:n])
+            diff = float(np.abs(stack[:n] - cstack).mean())
+            if diff < 6.0:
+                return False, (
+                    f"output matches conditioning skeleton (mean abs diff {diff:.1f}) "
+                    "— control passthrough, not a rendered character"
+                )
+    return True, (
+        f"content ok (mean {mean_lum:.0f}, spatial std {spatial_std:.0f}, "
+        f"motion {inter:.1f})"
+    )
 
 
 if __name__ == "__main__":

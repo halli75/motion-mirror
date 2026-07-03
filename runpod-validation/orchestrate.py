@@ -231,6 +231,7 @@ def terminate(pod_id: str) -> None:
     finally:
         state = _state()
         state["pods"][pod_id]["terminated"] = True
+        state["pods"][pod_id].setdefault("ended_at", time.time())
         _save_state(state)
 
 
@@ -274,9 +275,19 @@ def fetch_evidence(pod_id: str, role: str) -> None:
 
 
 def our_spend(state: dict) -> float:
-    total = 0.0
+    # prior_spent carries real cumulative spend from pods whose exact end time
+    # wasn't captured (e.g. terminated before ended_at was recorded).
+    total = state.get("prior_spent", 0.0)
+    now = time.time()
     for pod in state["pods"].values():
-        end = pod.get("ended_at") or time.time()
+        if pod.get("ended_at"):
+            end = pod["ended_at"]
+        elif pod.get("terminated"):
+            # Terminated but no timestamp: its real (short) cost is already in
+            # prior_spent / the RunPod balance — don't count it as still running.
+            continue
+        else:
+            end = now
         total += pod["cost_per_hr"] * max(0.0, end - pod["launched_at"]) / 3600
     return total
 

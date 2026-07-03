@@ -7,7 +7,13 @@ import pytest
 
 from motion_mirror.config import MotionMirrorConfig
 from motion_mirror.exceptions import HardwareError, InsufficientVRAMError, MotionMirrorError
-from motion_mirror.hardware import GPUInfo, auto_config, get_gpu_info, recommend_backend
+from motion_mirror.hardware import (
+    _BACKEND_TIERS,
+    GPUInfo,
+    auto_config,
+    get_gpu_info,
+    recommend_backend,
+)
 
 
 def test_gpu_info_used_vram():
@@ -58,7 +64,25 @@ def test_recommend_backend_16gb_gguf():
 
 
 def test_recommend_backend_just_below_gguf_threshold():
-    backend, overrides = recommend_backend(15.9)
+    backend, overrides = recommend_backend(12.2)
+    assert backend == "wan-1.3b-vace"
+    assert overrides == {"t5_cpu": True}
+
+
+def test_recommend_backend_13gb_routes_to_gguf():
+    backend, overrides = recommend_backend(13.0)
+    assert backend == "wan-move-gguf"
+    assert overrides == {"offload_model": True, "t5_cpu": True}
+
+
+def test_recommend_backend_11_5_falls_to_min_vace():
+    backend, overrides = recommend_backend(11.5)
+    assert backend == "wan-1.3b-vace"
+    assert overrides == {"offload_model": True, "t5_cpu": True}
+
+
+def test_recommend_backend_12_1_mid_vace_t5_cpu_only():
+    backend, overrides = recommend_backend(12.1)
     assert backend == "wan-1.3b-vace"
     assert overrides == {"t5_cpu": True}
 
@@ -75,26 +99,32 @@ def test_recommend_backend_just_below_mid_threshold():
     assert overrides == {"offload_model": True, "t5_cpu": True}
 
 
-def test_recommend_backend_9gb_activates_offload():
-    backend, overrides = recommend_backend(9.0)
+def test_recommend_backend_9_5gb_activates_offload():
+    backend, overrides = recommend_backend(9.5)
     assert backend == "wan-1.3b-vace"
     assert overrides == {"offload_model": True, "t5_cpu": True}
 
 
-def test_recommend_backend_8gb_boundary():
-    backend, overrides = recommend_backend(8.0)
+def test_recommend_backend_9_02gb_boundary():
+    backend, overrides = recommend_backend(9.02)
     assert backend == "wan-1.3b-vace"
     assert overrides == {"offload_model": True, "t5_cpu": True}
 
 
 def test_recommend_backend_insufficient_raises():
     with pytest.raises(InsufficientVRAMError) as exc_info:
-        recommend_backend(7.9)
-    assert exc_info.value.available_gb == pytest.approx(7.9)
-    assert exc_info.value.required_gb == 8.0
+        recommend_backend(8.5)
+    assert exc_info.value.available_gb == pytest.approx(8.5)
+    assert exc_info.value.required_gb == pytest.approx(9.02)
     message = str(exc_info.value)
-    assert "at least 8 GB" in message
+    assert "9.02 GB" in message
     assert "wan-1.3b-vace" in message
+
+
+def test_backend_tiers_strictly_descend_by_floor():
+    floors = [tier.minimum_vram_gb for tier in _BACKEND_TIERS]
+    assert floors == sorted(floors, reverse=True)
+    assert len(set(floors)) == len(floors)
 
 
 def test_recommend_backend_zero_vram_raises():
@@ -108,7 +138,7 @@ def test_auto_config_without_gpu_raises():
         with pytest.raises(InsufficientVRAMError) as exc_info:
             auto_config(cfg)
     assert exc_info.value.available_gb == 0.0
-    assert exc_info.value.required_gb == 8.0
+    assert exc_info.value.required_gb == pytest.approx(9.02)
     message = str(exc_info.value)
     assert "no CUDA GPU" in message
     assert "--backend mock" in message
@@ -122,10 +152,11 @@ def test_auto_config_without_gpu_raises():
         (24.0, "wan-move-fast", True, True),
         (23.9, "wan-move-gguf", True, True),
         (16.0, "wan-move-gguf", True, True),
-        (15.9, "wan-1.3b-vace", False, True),
+        (13.0, "wan-move-gguf", True, True),
+        (12.2, "wan-1.3b-vace", False, True),
         (12.0, "wan-1.3b-vace", False, True),
         (11.9, "wan-1.3b-vace", True, True),
-        (8.0, "wan-1.3b-vace", True, True),
+        (9.5, "wan-1.3b-vace", True, True),
     ],
 )
 def test_auto_config_resolves_mocked_vram_boundaries(

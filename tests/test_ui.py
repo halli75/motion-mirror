@@ -49,6 +49,53 @@ def test_create_app_has_video_output():
     assert len(videos) >= 1, "No Video component found in Blocks"
 
 
+def _find_frames_slider(demo):
+    for c in demo.blocks.values():
+        if isinstance(c, gr.Slider) and c.label == "Frames":
+            return c
+    raise AssertionError("Frames slider not found in Blocks")
+
+
+def test_frames_slider_emits_valid_wan_frame_counts():
+    """Wan requires num_frames ≡ 1 (mod 4); every slider stop must comply."""
+    demo = create_app()
+    sl = _find_frames_slider(demo)
+    assert sl.minimum == 5, f"slider minimum {sl.minimum} breaks 4k+1 grid"
+    assert sl.step == 4
+    assert sl.minimum % 4 == 1
+    assert sl.maximum % 4 == 1
+    assert sl.value % 4 == 1
+    # default (81) must sit exactly on a slider stop
+    assert (sl.value - sl.minimum) % sl.step == 0
+
+
+@pytest.mark.parametrize("frames,expected", [(80, 81), (4, 5), (81, 81), (2, 1)])
+def test_run_pipeline_snaps_frames_to_4k_plus_1(monkeypatch, tmp_path, frames, expected):
+    """_run_pipeline must snap arbitrary frame counts to the nearest 4k+1."""
+    import motion_mirror.pipeline as pipeline_mod
+
+    captured = {}
+
+    class FakePipeline:
+        def __init__(self, cfg):
+            captured["cfg"] = cfg
+
+        def run(self, img, vid):
+            class Result:
+                output_path = tmp_path / "out.mp4"
+            return Result()
+
+    monkeypatch.setattr(pipeline_mod, "MotionMirrorPipeline", FakePipeline)
+    from motion_mirror.ui.app import _run_pipeline
+
+    img = tmp_path / "char.png"
+    img.touch()
+    vid = tmp_path / "motion.mp4"
+    vid.touch()
+    _run_pipeline(str(img), str(vid), "mock", "64x32", frames, 16, "cpu")
+    assert captured["cfg"].num_frames == expected
+
+
 def test_on_run_missing_inputs_returns_error():
     """Calling on_run with None inputs must return an error string, not raise."""
     # Extract the on_run function by invoking create_app and inspecting the event

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 
 BackendName = Literal[
     "auto",
@@ -14,6 +14,11 @@ BackendName = Literal[
     "controlnet",
     "mock",
 ]
+
+DeviceName = Literal["cuda", "cpu"]
+FlowEstimatorName = Literal["farneback", "raft"]
+SegmenterName = Literal["rembg", "sam2"]
+ReferenceMaskerName = Literal["pose", "sam2"]
 
 
 @dataclass(slots=True)
@@ -74,6 +79,22 @@ class MotionMirrorConfig:
             raise ValueError(
                 f"num_frames must be >= 1, got {self.num_frames}"
             )
+
+        # Validate Literal-typed / enumerated string fields against their
+        # allowed sets so bad values fail here instead of deep in a stage.
+        for field_name, allowed in (
+            ("backend", get_args(BackendName)),
+            ("device", get_args(DeviceName)),
+            ("flow_estimator", get_args(FlowEstimatorName)),
+            ("segmenter", get_args(SegmenterName)),
+            ("reference_masker", get_args(ReferenceMaskerName)),
+        ):
+            value = getattr(self, field_name)
+            if value not in allowed:
+                raise ValueError(
+                    f"Invalid {field_name} {value!r}. "
+                    f"Allowed values: {list(allowed)}."
+                )
 
     @property
     def output_dir(self) -> Path:

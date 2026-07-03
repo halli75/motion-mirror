@@ -27,10 +27,14 @@ def _run_pipeline(
     if img_path is None or vid_path is None:
         return None, "Error: provide both a character image and a motion video."
 
+    # Wan requires num_frames ≡ 1 (mod 4). Defensively snap arbitrary inputs
+    # to the nearest valid 4k+1 count (e.g. 80→81, 4→5, 2→1).
+    snapped_frames = 4 * round((int(frames) - 1) / 4) + 1
+
     run_cfg = MotionMirrorConfig(
         backend=backend,
         resolution=resolution,
-        num_frames=int(frames),
+        num_frames=snapped_frames,
         trajectory_density=int(density),
         device=device,
     )
@@ -122,7 +126,7 @@ def create_app(config: "MotionMirrorConfig | None" = None):
                 )
             with gr.Row():
                 frames_sl = gr.Slider(
-                    minimum=4,
+                    minimum=5,
                     maximum=121,
                     step=4,
                     value=cfg_defaults.num_frames,

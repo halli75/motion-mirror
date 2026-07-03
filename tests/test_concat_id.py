@@ -56,6 +56,42 @@ def _write_concat_id_assets(cfg: MotionMirrorConfig) -> Path:
     return model_dir
 
 
+def _install_fake_runtime(monkeypatch, pipeline_call):
+    cuda = types.SimpleNamespace(is_available=lambda: True, empty_cache_calls=0)
+
+    def _empty_cache():
+        cuda.empty_cache_calls += 1
+
+    cuda.empty_cache = _empty_cache
+    fake_torch = types.SimpleNamespace(bfloat16="bfloat16", float32="float32", cuda=cuda)
+
+    class FakeModelConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeWanVideoPipeline:
+        @classmethod
+        def from_pretrained(cls, **kwargs):
+            return cls()
+
+        def load_concat_id(self, **kwargs):
+            pass
+
+        def __call__(self, **kwargs):
+            return pipeline_call(**kwargs)
+
+    diffsynth_mod = types.ModuleType("diffsynth")
+    pipelines_mod = types.ModuleType("diffsynth.pipelines")
+    wan_video_mod = types.ModuleType("diffsynth.pipelines.wan_video")
+    wan_video_mod.ModelConfig = FakeModelConfig
+    wan_video_mod.WanVideoPipeline = FakeWanVideoPipeline
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "diffsynth", diffsynth_mod)
+    monkeypatch.setitem(sys.modules, "diffsynth.pipelines", pipelines_mod)
+    monkeypatch.setitem(sys.modules, "diffsynth.pipelines.wan_video", wan_video_mod)
+    return cuda
+
+
 def test_concat_id_missing_weights_error_is_clear(tmp_path):
     req = _request(tmp_path)
     cfg = _cfg(tmp_path)
@@ -83,6 +119,7 @@ def test_concat_id_fake_runtime_call_writes_video(tmp_path, monkeypatch):
     class FakeTorch:
         bfloat16 = "bfloat16"
         float32 = "float32"
+        cuda = types.SimpleNamespace(is_available=lambda: False)
 
     class FakeModelConfig:
         def __init__(self, **kwargs):
@@ -128,3 +165,33 @@ def test_concat_id_fake_runtime_call_writes_video(tmp_path, monkeypatch):
     assert generate_call["num_frames"] == 3
     assert generate_call["seed"] == 123
     assert generate_call["face_image"].size == (32, 32)
+
+
+def test_concat_id_empties_cuda_cache_after_success(tmp_path, monkeypatch):
+    req = _request(tmp_path)
+    cfg = _cfg(tmp_path)
+    _write_concat_id_assets(cfg)
+    cuda = _install_fake_runtime(
+        monkeypatch,
+        lambda **kwargs: [Image.new("RGB", (64, 32), (10, 20, 200)) for _ in range(3)],
+    )
+
+    generate_with_concat_id(req, cfg)
+
+    assert cuda.empty_cache_calls == 1
+
+
+def test_concat_id_empties_cuda_cache_when_generation_raises(tmp_path, monkeypatch):
+    req = _request(tmp_path)
+    cfg = _cfg(tmp_path)
+    _write_concat_id_assets(cfg)
+
+    def _boom(**kwargs):
+        raise RuntimeError("CUDA out of memory during Concat-ID generation")
+
+    cuda = _install_fake_runtime(monkeypatch, _boom)
+
+    with pytest.raises(RuntimeError, match="CUDA out of memory during Concat-ID generation"):
+        generate_with_concat_id(req, cfg)
+
+    assert cuda.empty_cache_calls == 1

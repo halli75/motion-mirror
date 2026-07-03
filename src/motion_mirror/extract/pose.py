@@ -18,6 +18,14 @@ from ..types import PoseSequence
 _SUPPORTED_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
 
 
+def _person_centroid(person_kps: np.ndarray) -> np.ndarray:
+    """Centroid of confident keypoints (conf > 0.3), falling back to all."""
+    xy = person_kps[person_kps[:, 2] > 0.3, :2]
+    if xy.size == 0:
+        xy = person_kps[:, :2]
+    return xy.mean(axis=0)
+
+
 def extract_pose(
     video_path: Path,
     config: MotionMirrorConfig | None = None,
@@ -155,6 +163,7 @@ def extract_pose(
 
     frame_area = frame_w * frame_h
     keypoints_list: list[np.ndarray] = []
+    prev_centroid: np.ndarray | None = None  # centroid of last kept detection
 
     for frame_idx, frame in enumerate(frames):
         result = tracker(frame)
@@ -231,7 +240,24 @@ def extract_pose(
                         stacklevel=2,
                     )
 
-        keypoints_list.append(kps_raw[0].astype(np.float32))  # take person 0
+        # ── Per-frame person selection ────────────────────────────────────
+        # Zero detections after frame 0: emit an all-zero frame (conf == 0)
+        # so downstream confidence gating degrades gracefully.
+        if num_people == 0:
+            keypoints_list.append(np.zeros((133, 3), dtype=np.float32))
+            continue
+
+        # Multiple detections: keep the person whose centroid is nearest the
+        # previously kept one (nearest-centroid association).
+        if prev_centroid is None or num_people == 1:
+            person = kps_raw[0]
+        else:
+            centroids = np.stack([_person_centroid(p) for p in kps_raw])
+            dists = np.linalg.norm(centroids - prev_centroid, axis=1)
+            person = kps_raw[int(np.argmin(dists))]
+
+        prev_centroid = _person_centroid(person)
+        keypoints_list.append(person.astype(np.float32))
 
     keypoints = np.stack(keypoints_list)  # (F, 133, 3)
 

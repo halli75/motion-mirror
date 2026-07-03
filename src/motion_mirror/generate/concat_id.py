@@ -48,20 +48,26 @@ def generate_with_concat_id(
 
     identity_image_path = request.identity_image_path or request.segmented_image_path
     identity_image = runtime["Image"].open(identity_image_path).convert("RGB")
+    torch = runtime["torch"]
     pipe = _build_pipeline(runtime, cfg, assets)
-    _load_identity_adapter(pipe, assets)
+    try:
+        _load_identity_adapter(pipe, assets)
 
-    output = pipe(
-        prompt=_DEFAULT_PROMPT,
-        face_image=identity_image,
-        height=out_h,
-        width=out_w,
-        num_frames=request.frames,
-        num_inference_steps=50,
-        cfg_scale=5.0,
-        seed=request.seed,
-    )
-    _write_output_video(request.output_path, output)
+        output = pipe(
+            prompt=_DEFAULT_PROMPT,
+            face_image=identity_image,
+            height=out_h,
+            width=out_w,
+            num_frames=request.frames,
+            num_inference_steps=50,
+            cfg_scale=5.0,
+            seed=request.seed,
+        )
+        _write_output_video(request.output_path, output)
+    finally:
+        del pipe
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     return GenerationResult(
         video_path=request.output_path,

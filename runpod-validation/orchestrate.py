@@ -170,10 +170,13 @@ def _pick_gpu(role_cfg: dict) -> tuple[str, float]:
 def launch(role: str) -> str:
     cfg = ROLES[role]
     gpu, bid = _pick_gpu(cfg)
+    # MM_TIER_A=1 in the orchestrator's env → lean re-validation (vace, gguf,
+    # fast only). Passed through to the pod's bootstrap.
+    tier_a = os.environ.get("MM_TIER_A", "0")
     docker_args = (
         "bash -lc 'cd /workspace && "
         f"git clone --depth 1 -b {BRANCH} {REPO_URL} repo && "
-        f"MM_ROLE={role} bash repo/runpod-validation/pod_bootstrap.sh'"
+        f"MM_ROLE={role} MM_TIER_A={tier_a} bash repo/runpod-validation/pod_bootstrap.sh'"
     )
     # Inline literal mutation (verified working pattern); json.dumps handles
     # GraphQL string escaping for the dockerArgs value.

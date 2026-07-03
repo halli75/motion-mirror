@@ -12,6 +12,10 @@
 set -uo pipefail
 
 ROLE="${MM_ROLE:?set MM_ROLE=a or b}"
+# MM_TIER_A=1 runs the lean re-validation set: just the three backends whose
+# fixes we are confirming (vace, gguf, fast). Skips sam2-vace, concat-id (needs
+# the unmerged Concat-ID fork), and the tier probe. Trims models + wall time.
+TIER_A="${MM_TIER_A:-0}"
 WS=/workspace
 REPO=$WS/repo
 RV=$REPO/runpod-validation
@@ -91,9 +95,25 @@ if ! python3 -m pip install -e "$REPO[$EXTRAS]"; then
   record_failure "pip install extras=$EXTRAS"
   finish aborted-pip-install
 fi
-if [ "$ROLE" = a ]; then
+if [ "$ROLE" = a ] && [ "$TIER_A" != 1 ]; then
   python3 -m pip install "git+https://github.com/facebookresearch/sam2.git" \
     || record_failure "pip install sam2"
+fi
+# fast backend: LightX2V eagerly imports flash_attn. Install a PREBUILT wheel
+# matching the image's torch 2.8 / cu12 / py3.11 — never a source build (that
+# takes 30+ min). A wrong-ABI wheel installs but crashes on import, so verify
+# the import and fall back to the other ABI. Best-effort: fast smoke is skipped
+# if neither works.
+if [ "$ROLE" = a ]; then
+  fa_base="https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3.post1"
+  fa_ok=false
+  for abi in abiTRUE abiFALSE; do
+    whl="flash_attn-2.8.3.post1+cu12torch2.8cxx11${abi}-cp311-cp311-linux_x86_64.whl"
+    python3 -m pip install "$fa_base/$whl" || continue
+    if python3 -c "import flash_attn" 2>/dev/null; then fa_ok=true; break; fi
+    python3 -m pip uninstall -y flash-attn >/dev/null 2>&1
+  done
+  $fa_ok || record_failure "flash-attn install (fast backend may fail)"
 fi
 if ! python3 -c "import torch; assert torch.cuda.is_available(), 'CUDA gone after installs'"; then
   record_failure "torch CUDA sanity check failed after pip installs"
@@ -159,7 +179,9 @@ fi
 # --- phase: model downloads (per group; failure skips dependent backends) ---
 # NB: do not name this GROUPS — bash's special GROUPS array silently ignores
 # assignments, which turns the loop variable into a group id.
-if [ "$ROLE" = a ]; then
+if [ "$ROLE" = a ] && [ "$TIER_A" = 1 ]; then
+  MM_GROUPS="dwpose light gguf fast"
+elif [ "$ROLE" = a ]; then
   MM_GROUPS="dwpose light fast gguf extras identity"
 else
   MM_GROUPS="dwpose wan-move"
@@ -200,6 +222,11 @@ if [ "$ROLE" = a ]; then
     || record_failure "skip smoke-gguf (missing models)"
   group_ok dwpose && group_ok fast && run_smoke fast wan-move-fast \
     || record_failure "skip smoke-fast (missing models)"
+
+  # Tier-A run stops here: sam2-vace, concat-id (needs the Concat-ID fork), and
+  # the tier probe are out of scope for confirming the three backend fixes.
+  if [ "$TIER_A" = 1 ]; then finish done-tier-a; fi
+
   group_ok dwpose && group_ok light && group_ok extras \
     && run_smoke sam2-vace wan-1.3b-vace --reference-masker sam2 \
     || record_failure "skip smoke-sam2-vace (missing models)"

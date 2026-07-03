@@ -225,7 +225,9 @@ def _generate_real(
     width, height = _snap_wan_size(pipe, out_w, out_h)
     char_image = char_image.resize((width, height), Image.LANCZOS)
 
-    generator = torch.Generator(device=config.device).manual_seed(request.seed)
+    generator = torch.Generator(
+        device=_resolve_generator_device(config, torch)
+    ).manual_seed(request.seed)
     output = pipe(
         image=char_image,
         prompt=_build_prompt(request.trajectory_map_path),
@@ -272,6 +274,7 @@ def _generate_gguf(
     try:
         from PIL import Image  # type: ignore[import]
         from diffusers import (  # type: ignore[import]
+            AutoencoderKLWan,
             GGUFQuantizationConfig,
             WanImageToVideoPipeline,
             WanTransformer3DModel,
@@ -287,6 +290,7 @@ def _generate_gguf(
         torch.cuda.empty_cache()
 
     dtype = torch.bfloat16
+    base_source = _resolve_wan_gguf_base_source(config)
     transformer = WanTransformer3DModel.from_single_file(
         str(transformer_path),
         quantization_config=GGUFQuantizationConfig(compute_dtype=dtype),
@@ -294,9 +298,16 @@ def _generate_gguf(
         subfolder="transformer",
         torch_dtype=dtype,
     )
+    # A fp32 VAE avoids the bf16 decode artifacts seen in _generate_real.
+    vae = AutoencoderKLWan.from_pretrained(
+        base_source,
+        subfolder="vae",
+        torch_dtype=torch.float32,
+    )
     pipe = WanImageToVideoPipeline.from_pretrained(
-        _resolve_wan_gguf_base_source(config),
+        base_source,
         transformer=transformer,
+        vae=vae,
         torch_dtype=dtype,
     )
     if config.offload_model:
@@ -319,7 +330,9 @@ def _generate_gguf(
     width, height = _snap_wan_size(pipe, out_w, out_h)
     char_image = char_image.resize((width, height), Image.LANCZOS)
 
-    generator = torch.Generator(device=config.device).manual_seed(request.seed)
+    generator = torch.Generator(
+        device=_resolve_generator_device(config, torch)
+    ).manual_seed(request.seed)
     output = pipe(
         image=char_image,
         prompt=_build_prompt(request.trajectory_map_path),
@@ -333,7 +346,7 @@ def _generate_gguf(
 
     _write_output_frames(request.output_path, output)
 
-    del pipe, transformer
+    del pipe, transformer, vae
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
@@ -379,42 +392,49 @@ def _generate_fast(
             "Run: pip install -e '.[lightx2v]'"
         ) from exc
 
-    pipe = LightX2VPipeline(
-        model_path=str(model_dir),
-        model_cls="wan2.1",
-        task="i2v",
-    )
+    try:
+        pipe = LightX2VPipeline(
+            model_path=str(model_dir),
+            model_cls="wan2.1",
+            task="i2v",
+        )
 
-    if config.offload_model or config.t5_cpu:
-        if not hasattr(pipe, "enable_offload"):
-            raise RuntimeError(
-                "Installed LightX2V runtime does not expose enable_offload(), "
-                "but offload flags were requested."
+        if config.offload_model or config.t5_cpu:
+            if not hasattr(pipe, "enable_offload"):
+                raise RuntimeError(
+                    "Installed LightX2V runtime does not expose enable_offload(), "
+                    "but offload flags were requested."
+                )
+            pipe.enable_offload(
+                cpu_offload=True,
+                offload_granularity="block",
+                text_encoder_offload=(config.offload_model or config.t5_cpu),
+                image_encoder_offload=False,
+                vae_offload=False,
             )
-        pipe.enable_offload(
-            cpu_offload=True,
-            offload_granularity="block",
-            text_encoder_offload=(config.offload_model or config.t5_cpu),
-            image_encoder_offload=False,
-            vae_offload=False,
+
+        pipe.create_generator(config_json=str(runtime_config_path))
+
+        pipe.generate(
+            seed=request.seed,
+            image_path=str(prepared_image_path),
+            prompt=_build_prompt(request.trajectory_map_path),
+            negative_prompt="",
+            save_result_path=str(request.output_path),
         )
 
-    pipe.create_generator(config_json=str(runtime_config_path))
-
-    pipe.generate(
-        seed=request.seed,
-        image_path=str(prepared_image_path),
-        prompt=_build_prompt(request.trajectory_map_path),
-        negative_prompt="",
-        save_result_path=str(request.output_path),
-    )
-
-    if not request.output_path.exists():
-        raise RuntimeError(
-            f"LightX2V did not produce an output video at {request.output_path}"
-        )
-
-    _empty_torch_cache_if_available()
+        if not request.output_path.exists():
+            raise RuntimeError(
+                f"LightX2V did not produce an output video at {request.output_path}"
+            )
+    finally:
+        # Free the pipe before emptying the cache; on live allocations the cache
+        # empty is otherwise a no-op. Guard NameError if construction failed.
+        try:
+            del pipe
+        except NameError:
+            pass
+        _empty_torch_cache_if_available()
 
     return GenerationResult(
         video_path=request.output_path,
@@ -436,14 +456,27 @@ def _validate_common_inputs(request: GenerationRequest) -> None:
 def _resolve_wan_model_source(config: MotionMirrorConfig) -> str:
     model_dir = config.model_cache("wan-move")
     has_local_weights = model_dir.exists() and any(model_dir.iterdir())
-    if has_local_weights and (model_dir / "model_index.json").exists():
-        return str(model_dir)
     if not has_local_weights:
         raise FileNotFoundError(
             f"Wan model weights not found in {model_dir}.\n"
             "Run: motion-mirror download --model wan-move"
         )
-    return _WAN_MODEL_ID
+    if not (model_dir / "model_index.json").exists():
+        # A populated cache without model_index.json is a partial download;
+        # falling back to the Hub repo id would silently pull multiple GB mid-run.
+        raise FileNotFoundError(
+            f"Wan model cache in {model_dir} is incomplete (model_index.json missing).\n"
+            "Run: motion-mirror download --model wan-move"
+        )
+    return str(model_dir)
+
+
+def _resolve_generator_device(config: MotionMirrorConfig, torch: object) -> str:
+    # torch.Generator(device="cuda") raises on CPU-only hosts even when the
+    # rest of the run has already fallen back to CPU.
+    if config.device == "cuda" and getattr(torch.cuda, "is_available", lambda: False)():
+        return "cuda"
+    return "cpu"
 
 
 def _resolve_wan_gguf_transformer_path(config: MotionMirrorConfig) -> Path:
@@ -472,20 +505,25 @@ def _resolve_wan_gguf_transformer_path(config: MotionMirrorConfig) -> Path:
 
 
 def _resolve_wan_gguf_base_source(config: MotionMirrorConfig) -> str:
+    # The 720P wan-move snapshot supplies the non-transformer base pipeline
+    # components (VAE, text/image encoders); the GGUF transformer itself is 480P,
+    # so there is a known 720P/480P provenance mismatch on the base weights.
     model_dir = config.cache_dir / "wan-move"
     if model_dir.exists() and (model_dir / "model_index.json").exists():
         return str(model_dir)
-    return _WAN_GGUF_BASE_MODEL_ID
+    raise FileNotFoundError(
+        f"Wan GGUF base pipeline components not found in {model_dir}.\n"
+        "The GGUF backend reuses the wan-move base weights (VAE, encoders).\n"
+        "Run: motion-mirror download --model wan-move"
+    )
 
 
 def _resolve_lightx2v_model_dir(config: MotionMirrorConfig) -> Path:
     model_dir = config.model_cache("wan-move-fast")
+    # ensure_lightx2v_fast_configs writes the runtime template into model_dir, so
+    # an emptiness check afterwards is always false; the required-asset audit
+    # below fully covers a bare/empty cache.
     ensure_lightx2v_fast_configs(model_dir)
-    if not model_dir.exists() or not any(model_dir.iterdir()):
-        raise FileNotFoundError(
-            f"LightX2V fast model assets not found in {model_dir}.\n"
-            "Run: motion-mirror download --model fast"
-        )
 
     missing: list[str] = []
     if _find_existing_path(model_dir, _FAST_DIT_CANDIDATES) is None:

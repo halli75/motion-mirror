@@ -226,6 +226,11 @@ def test_wan_move_gguf_calls_diffusers_model_level_loader(tmp_path):
     gguf_path = model_dir / "wan2.1-i2v-14b-480p-Q4_K_M.gguf"
     gguf_path.write_bytes(b"fake-gguf")
 
+    # GGUF backend reuses the wan-move base weights for the VAE and encoders.
+    base_dir = cfg.cache_dir / "wan-move"
+    base_dir.mkdir(parents=True, exist_ok=True)
+    (base_dir / "model_index.json").write_text("{}", encoding="utf-8")
+
     req = GenerationRequest(
         segmented_image_path=seg,
         trajectory_map_path=traj,
@@ -239,6 +244,7 @@ def test_wan_move_gguf_calls_diffusers_model_level_loader(tmp_path):
 
     fake_torch = types.ModuleType("torch")
     fake_torch.bfloat16 = "bfloat16"
+    fake_torch.float32 = "float32"
     fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False, empty_cache=lambda: None)
 
     class FakeGenerator:
@@ -251,6 +257,18 @@ def test_wan_move_gguf_calls_diffusers_model_level_loader(tmp_path):
             return self
 
     fake_torch.Generator = lambda device: FakeGenerator(device)
+
+    class FakeAutoencoderKLWan:
+        last_args = None
+        last_instance = None
+
+        def __init__(self) -> None:
+            FakeAutoencoderKLWan.last_instance = self
+
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            cls.last_args = (args, kwargs)
+            return cls()
 
     class FakeGGUFQuantizationConfig:
         def __init__(self, compute_dtype) -> None:
@@ -311,6 +329,7 @@ def test_wan_move_gguf_calls_diffusers_model_level_loader(tmp_path):
             return types.SimpleNamespace(frames=[frames])
 
     fake_diffusers = types.ModuleType("diffusers")
+    fake_diffusers.AutoencoderKLWan = FakeAutoencoderKLWan
     fake_diffusers.GGUFQuantizationConfig = FakeGGUFQuantizationConfig
     fake_diffusers.WanTransformer3DModel = FakeWanTransformer3DModel
     fake_diffusers.WanImageToVideoPipeline = FakePipe
@@ -327,11 +346,17 @@ def test_wan_move_gguf_calls_diffusers_model_level_loader(tmp_path):
     assert transformer_kwargs["subfolder"] == "transformer"
     assert transformer_kwargs["torch_dtype"] == "bfloat16"
     assert transformer_kwargs["quantization_config"].compute_dtype == "bfloat16"
+    assert FakeAutoencoderKLWan.last_args is not None
+    vae_args, vae_kwargs = FakeAutoencoderKLWan.last_args
+    assert vae_args == (str(base_dir),)
+    assert vae_kwargs["subfolder"] == "vae"
+    assert vae_kwargs["torch_dtype"] == "float32"
     assert FakePipe.last_instance is not None
     pipe = FakePipe.last_instance
     pipe_args, pipe_kwargs = pipe.pretrained_args
-    assert pipe_args == ("Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",)
+    assert pipe_args == (str(base_dir),)
     assert pipe_kwargs["transformer"] is FakeWanTransformer3DModel.last_instance
+    assert pipe_kwargs["vae"] is FakeAutoencoderKLWan.last_instance
     assert pipe_kwargs["torch_dtype"] == "bfloat16"
     assert pipe.device == "cpu"
     assert pipe.text_encoder.device == "cpu"
@@ -504,6 +529,45 @@ def test_wan_move_fast_calls_lightx2v_pipeline(tmp_path):
     assert runtime_cfg["cross_attn_2_type"] == "torch"
     assert pipe.generate_kwargs["seed"] == 11
     assert pipe.generate_kwargs["save_result_path"] == str(req.output_path)
+
+
+def test_resolve_wan_model_source_incomplete_cache_raises(tmp_path):
+    cfg = MotionMirrorConfig(
+        project_root=tmp_path,
+        cache_dir=tmp_path / "cache",
+        backend="wan-move-14b",
+        device="cpu",
+    )
+    model_dir = cfg.model_cache("wan-move")
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")  # non-empty, no model_index.json
+
+    with pytest.raises(FileNotFoundError, match="incomplete|model_index"):
+        wan_move._resolve_wan_model_source(cfg)
+
+
+def test_resolve_wan_gguf_base_source_missing_raises(tmp_path):
+    cfg = MotionMirrorConfig(
+        project_root=tmp_path,
+        cache_dir=tmp_path / "cache",
+        backend="wan-move-gguf",
+        device="cpu",
+    )
+
+    with pytest.raises(FileNotFoundError, match="base"):
+        wan_move._resolve_wan_gguf_base_source(cfg)
+
+
+def test_resolve_generator_device_falls_back_to_cpu_without_cuda(tmp_path):
+    cfg = MotionMirrorConfig(project_root=tmp_path, device="cuda")
+    torch_no_cuda = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(is_available=lambda: False)
+    )
+    torch_with_cuda = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(is_available=lambda: True)
+    )
+
+    assert wan_move._resolve_generator_device(cfg, torch_no_cuda) == "cpu"
+    assert wan_move._resolve_generator_device(cfg, torch_with_cuda) == "cuda"
 
 
 def test_controlnet_returns_generation_result(tmp_path):

@@ -20,6 +20,11 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
+      - name: Shellcheck pod scripts
+        run: |
+          pip install shellcheck-py --quiet
+          shellcheck runpod-validation/*.sh
+
       - name: Install onnxruntime (required by rembg)
         run: pip install onnxruntime --quiet
 

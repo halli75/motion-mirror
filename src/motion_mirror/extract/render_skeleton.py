@@ -8,46 +8,51 @@ import numpy as np
 
 from ..types import PoseSequence
 
-_BODY_EDGES: tuple[tuple[int, int], ...] = (
-    (0, 1),
-    (0, 2),
-    (1, 3),
-    (2, 4),
-    (0, 5),
-    (0, 6),
-    (5, 6),
-    (5, 7),
-    (7, 9),
-    (6, 8),
-    (8, 10),
-    (5, 11),
-    (6, 12),
-    (11, 12),
-    (11, 13),
-    (13, 15),
-    (12, 14),
-    (14, 16),
+# VACE was trained on canonical OpenPose BODY-18 renders (controlnet_aux
+# draw_bodypose): 18 joints including a synthesized neck, a fixed limb
+# sequence, and a fixed 18-color palette, limbs drawn as filled ellipses then
+# dimmed to 0.6 before full-color joint circles. Anything else (the previous
+# COCO-17 render with custom colors) is out-of-distribution and the model
+# reproduces the control literally instead of using it as a pose hint.
+
+# OpenPose BODY-18 index <- COCO-17 index; -1 marks the synthesized neck
+# (midpoint of the two shoulders, confidence = min of both).
+_OPENPOSE_FROM_COCO: tuple[int, ...] = (
+    0,   # 0  nose
+    -1,  # 1  neck (synthesized)
+    6,   # 2  R shoulder
+    8,   # 3  R elbow
+    10,  # 4  R wrist
+    5,   # 5  L shoulder
+    7,   # 6  L elbow
+    9,   # 7  L wrist
+    12,  # 8  R hip
+    14,  # 9  R knee
+    16,  # 10 R ankle
+    11,  # 11 L hip
+    13,  # 12 L knee
+    15,  # 13 L ankle
+    2,   # 14 R eye
+    1,   # 15 L eye
+    4,   # 16 R ear
+    3,   # 17 L ear
 )
 
-_EDGE_COLOURS: tuple[tuple[int, int, int], ...] = (
-    (255, 255, 255),
-    (255, 255, 255),
-    (255, 200, 0),
-    (255, 200, 0),
-    (0, 220, 255),
-    (0, 220, 255),
-    (180, 180, 180),
-    (0, 255, 0),
-    (0, 255, 0),
-    (0, 255, 0),
-    (0, 255, 0),
-    (255, 0, 255),
-    (255, 0, 255),
-    (180, 180, 180),
-    (255, 128, 0),
-    (255, 128, 0),
-    (255, 128, 0),
-    (255, 128, 0),
+# Canonical limb sequence (0-indexed BODY-18 pairs), same order as the palette.
+_LIMB_SEQ: tuple[tuple[int, int], ...] = (
+    (1, 2), (1, 5), (2, 3), (3, 4), (5, 6), (6, 7), (1, 8), (8, 9), (9, 10),
+    (1, 11), (11, 12), (12, 13), (1, 0), (0, 14), (14, 16), (0, 15), (15, 17),
+)
+
+# Canonical OpenPose palette, stored BGR for cv2 (source values are RGB).
+_PALETTE_RGB: tuple[tuple[int, int, int], ...] = (
+    (255, 0, 0), (255, 85, 0), (255, 170, 0), (255, 255, 0), (170, 255, 0),
+    (85, 255, 0), (0, 255, 0), (0, 255, 85), (0, 255, 170), (0, 255, 255),
+    (0, 170, 255), (0, 85, 255), (0, 0, 255), (85, 0, 255), (170, 0, 255),
+    (255, 0, 255), (255, 0, 170), (255, 0, 85),
+)
+_PALETTE_BGR: tuple[tuple[int, int, int], ...] = tuple(
+    (b, g, r) for (r, g, b) in _PALETTE_RGB
 )
 
 
@@ -62,29 +67,41 @@ def render_skeleton_frames(
     src_w, src_h = pose_seq.frame_size
     keypoints = _resample_keypoints(pose_seq.keypoints, num_frames)
 
-    line_thickness = max(2, round(min(out_w, out_h) / 160))
+    stick_width = max(2, round(min(out_w, out_h) / 160))
     joint_radius = max(2, round(min(out_w, out_h) / 120))
     frames: list[np.ndarray] = []
 
     for frame_kps in keypoints:
         canvas = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+        body = _coco_to_openpose18(frame_kps)
         drawn = False
 
-        for colour, (idx0, idx1) in zip(_EDGE_COLOURS, _BODY_EDGES):
-            kp0 = frame_kps[idx0]
-            kp1 = frame_kps[idx1]
+        # Limbs: filled ellipses at full palette color, then dim the whole
+        # limb layer to 0.6 — matches controlnet_aux draw_bodypose.
+        for colour, (idx0, idx1) in zip(_PALETTE_BGR, _LIMB_SEQ):
+            kp0 = body[idx0]
+            kp1 = body[idx1]
             if kp0[2] < confidence_threshold or kp1[2] < confidence_threshold:
                 continue
-            pt0 = _scale_point(kp0[:2], src_w, src_h, out_w, out_h)
-            pt1 = _scale_point(kp1[:2], src_w, src_h, out_w, out_h)
-            cv2.line(canvas, pt0, pt1, colour, line_thickness, lineType=cv2.LINE_AA)
+            x0, y0 = _scale_point(kp0[:2], src_w, src_h, out_w, out_h)
+            x1, y1 = _scale_point(kp1[:2], src_w, src_h, out_w, out_h)
+            centre = (round((x0 + x1) / 2), round((y0 + y1) / 2))
+            length = float(np.hypot(x1 - x0, y1 - y0))
+            angle = float(np.degrees(np.arctan2(y1 - y0, x1 - x0)))
+            polygon = cv2.ellipse2Poly(
+                centre, (max(1, round(length / 2)), stick_width), round(angle), 0, 360, 1
+            )
+            cv2.fillConvexPoly(canvas, polygon, colour)
             drawn = True
 
-        for kp in frame_kps[:17]:
+        canvas = (canvas.astype(np.float32) * 0.6).astype(np.uint8)
+
+        # Joints: full-color circles on top of the dimmed limbs.
+        for colour, kp in zip(_PALETTE_BGR, body):
             if kp[2] < confidence_threshold:
                 continue
             pt = _scale_point(kp[:2], src_w, src_h, out_w, out_h)
-            cv2.circle(canvas, pt, joint_radius, (255, 255, 255), -1, lineType=cv2.LINE_AA)
+            cv2.circle(canvas, pt, joint_radius, colour, -1)
             drawn = True
 
         if not drawn:
@@ -92,14 +109,26 @@ def render_skeleton_frames(
                 canvas,
                 (out_w // 2, out_h // 2),
                 max(joint_radius, 3),
-                (255, 255, 255),
+                _PALETTE_BGR[0],
                 -1,
-                lineType=cv2.LINE_AA,
             )
 
         frames.append(canvas)
 
     return frames
+
+
+def _coco_to_openpose18(frame_kps: np.ndarray) -> np.ndarray:
+    """Remap COCO-WholeBody's first 17 body keypoints to OpenPose BODY-18."""
+    body = np.zeros((18, 3), dtype=np.float32)
+    for op_idx, coco_idx in enumerate(_OPENPOSE_FROM_COCO):
+        if coco_idx >= 0:
+            body[op_idx] = frame_kps[coco_idx]
+    l_sho = frame_kps[5]
+    r_sho = frame_kps[6]
+    body[1, :2] = (l_sho[:2] + r_sho[:2]) / 2.0
+    body[1, 2] = min(float(l_sho[2]), float(r_sho[2]))
+    return body
 
 
 def render_skeleton_conditioning_artifacts(

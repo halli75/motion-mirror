@@ -12,3 +12,7 @@ dist/
 .DS_Store
 data/
 outputs/
+
+# runpod validation local artifacts
+runpod-validation/inputs/
+runpod-validation/.orchestrator-state.json

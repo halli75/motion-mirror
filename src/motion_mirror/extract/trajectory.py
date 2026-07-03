@@ -420,7 +420,15 @@ def _layer1_skeleton_tracks(
     body_transform: np.ndarray,   # 3x3
     char_size: tuple[int, int],
 ) -> np.ndarray:
-    """Return (F, N1, 2) normalised tracks for confident keypoints."""
+    """Return (F, N1, 2) normalised tracks for confident keypoints.
+
+    A keypoint is selected once by its *mean* confidence across frames, but the
+    raw per-frame coordinate is only trusted where that frame's confidence clears
+    the gate (0.3, matching ``render_skeleton``).  Occluded frames (low conf,
+    typically garbage ``(0, 0)`` coords) hold the last confident position; a
+    leading occlusion is back-filled from the first confident frame.  This keeps
+    detector drop-outs from leaking raw low-confidence coordinates into tracks.
+    """
     num_frames = keypoints.shape[0]
 
     # Select keypoints with mean confidence > 0.3 across frames
@@ -431,12 +439,41 @@ def _layer1_skeleton_tracks(
         # Degenerate fallback: single track at image centre
         return np.full((num_frames, 1, 2), 0.5, dtype=np.float32)
 
+    coords = keypoints[:, confident, :2].astype(np.float32)  # (F, N1, 2)
+    gate = keypoints[:, confident, 2] > 0.3                  # (F, N1) per-frame
+    filled = _hold_confident_positions(coords, gate)
+
     tracks = np.zeros((num_frames, len(confident), 2), dtype=np.float32)
     for f in range(num_frames):
-        pts = keypoints[f, confident, :2]  # (N1, 2)
-        tracks[f] = _apply_transform_to_points(pts, body_transform, char_size)
+        tracks[f] = _apply_transform_to_points(filled[f], body_transform, char_size)
 
     return np.clip(tracks, 0.0, 1.0)
+
+
+def _hold_confident_positions(
+    coords: np.ndarray,  # (F, N, 2)
+    gate: np.ndarray,    # (F, N) bool — True where the frame is confident
+) -> np.ndarray:
+    """Forward-fill each keypoint's last confident position through occlusions.
+
+    Below-gate frames adopt the most recent confident coordinate; a leading run
+    of occluded frames is back-filled from the first confident frame.  Each
+    selected keypoint is guaranteed at least one confident frame (mean > 0.3
+    implies some frame > 0.3), so no column is left unfilled.
+    """
+    num_frames, n = coords.shape[:2]
+    out = coords.copy()
+    for j in range(n):
+        last: np.ndarray | None = None
+        for f in range(num_frames):
+            if gate[f, j]:
+                last = out[f, j].copy()
+            elif last is not None:
+                out[f, j] = last
+        # Back-fill a leading occlusion from the first confident frame.
+        first_idx = int(np.argmax(gate[:, j])) if gate[:, j].any() else 0
+        out[:first_idx, j] = out[first_idx, j]
+    return out
 
 
 def _layer2_interpolated_tracks(
@@ -449,8 +486,14 @@ def _layer2_interpolated_tracks(
     Vectorized: computes weighted displacements for all seed points in one
     NumPy operation per frame instead of iterating over individual seeds.
     Seeds are positioned inside the character segmentation mask; their motion
-    is a Gaussian-weighted sum of Layer-1 displacements (σ=0.15 in normalised
-    space), so they follow skeleton tracks with strength proportional to proximity.
+    is a Gaussian-weighted sum of Layer-1 displacements, so they follow skeleton
+    tracks with strength proportional to proximity.
+
+    Falloff is computed in *isotropic pixel space* (both axes share the frame's
+    pixel scale) so the Gaussian is not distorted on non-square frames, and the
+    sigma is set relative to the character bounding-box height (``σ=0.15`` of the
+    bbox height) so the falloff scales with the subject.  On a square frame with a
+    full-frame subject this reduces to the previous σ=0.15-in-normalised behaviour.
     """
     num_frames, n1, _ = layer1_tracks.shape
     n2 = density // 2
@@ -471,11 +514,16 @@ def _layer2_interpolated_tracks(
     # Frame-0 Layer-1 positions used as displacement anchors
     anchor = layer1_tracks[0]  # (N1, 2)
 
+    # Isotropic sigma in pixels, tied to the subject bounding-box height.
+    bbox_h = max(int(ys.max() - ys.min()), 1)
+    sigma_px = _GAUSSIAN_SIGMA * bbox_h
+    px_scale = np.array([w, h], dtype=np.float32)  # normalised → pixels
+
     # Pre-compute per-seed Gaussian weights once (they depend only on seed positions)
-    # diff[i, j] = anchor[j] - seeds[i]  →  shape (actual_n2, N1, 2)
-    diff = anchor[np.newaxis, :, :] - seeds[:, np.newaxis, :]
+    # diff[i, j] = anchor[j] - seeds[i]  →  shape (actual_n2, N1, 2), in pixels
+    diff = (anchor[np.newaxis, :, :] - seeds[:, np.newaxis, :]) * px_scale
     dist2 = (diff ** 2).sum(axis=2)                                # (actual_n2, N1)
-    weights = np.exp(-dist2 / (2 * _GAUSSIAN_SIGMA ** 2))         # (actual_n2, N1)
+    weights = np.exp(-dist2 / (2 * sigma_px ** 2))               # (actual_n2, N1)
     w_sum = weights.sum(axis=1, keepdims=True)                     # (actual_n2, 1)
     no_influence = (w_sum.squeeze(1) < 1e-12)                      # (actual_n2,)
     safe_w_sum = np.where(w_sum < 1e-12, np.ones_like(w_sum), w_sum)
@@ -634,9 +682,17 @@ def _layer3_flow_tracks(
         seed_x = nr_xs[sel].astype(np.float32)
         seed_y = nr_ys[sel].astype(np.float32)
     else:
-        # Fallback: uniform grid
-        seed_x = np.linspace(0, fw - 1, n3, dtype=np.float32)
-        seed_y = np.linspace(0, fh - 1, n3, dtype=np.float32)
+        # Fallback: a true 2D grid covering the frame (deterministic).
+        # Two co-increasing linspaces would be a diagonal line, not a grid —
+        # build gx×gy points with gx*gy >= n3 and gx/gy ≈ fw/fh, then take n3.
+        gx = max(1, int(round(np.sqrt(n3 * fw / fh))))
+        gy = max(1, int(np.ceil(n3 / gx)))
+        grid_x, grid_y = np.meshgrid(
+            np.linspace(0, fw - 1, gx, dtype=np.float32),
+            np.linspace(0, fh - 1, gy, dtype=np.float32),
+        )
+        seed_x = grid_x.reshape(-1)[:n3]
+        seed_y = grid_y.reshape(-1)[:n3]
 
     actual_n3 = len(seed_x)
     seeds_vid = np.stack([seed_x, seed_y], axis=1)  # (n3, 2) in video px

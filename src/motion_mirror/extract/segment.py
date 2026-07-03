@@ -125,7 +125,9 @@ def _segment_rembg(
 
     rgba_np = np.array(rgba_pil, dtype=np.uint8)        # (H, W, 4)
     mask_np = rgba_np[:, :, 3]                           # alpha channel
-    mask_np = np.where(mask_np > 0, np.uint8(255), np.uint8(0))
+    # Threshold at the midpoint so soft anti-alias halo pixels (low alpha) are
+    # excluded rather than promoted to solid foreground.
+    mask_np = np.where(mask_np > 127, np.uint8(255), np.uint8(0))
 
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     rgba_path = cfg.output_dir / "segmented.png"

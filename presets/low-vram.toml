@@ -6,5 +6,5 @@ resolution = "832x480"
 num_frames = 81
 trajectory_density = 512
 device = "cuda"
-offload_model = false
-t5_cpu = false
+offload_model = true
+t5_cpu = true

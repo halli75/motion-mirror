@@ -278,13 +278,21 @@ def our_spend(state: dict) -> float:
     return total
 
 
-def run(role: str) -> int:
+def run(role: str, attach_pod_id: str | None = None) -> int:
     cfg = ROLES[role]
-    pod_id = launch(role)
+    if attach_pod_id:
+        pod_id = attach_pod_id
+        if pod_id not in _state()["pods"]:
+            sys.exit(f"refusing to attach to {pod_id}: not created by this orchestrator")
+        print(f"attached to existing pod {pod_id}")
+    else:
+        pod_id = launch(role)
     exit_code = 1
     retried = False
     try:
-        started = time.time()
+        started = (
+            _state()["pods"][pod_id]["launched_at"] if attach_pod_id else time.time()
+        )
         first_beat: float | None = None
         last_beat_change: float = time.time()
         last_beat_value: bytes | None = None
@@ -382,6 +390,9 @@ def main() -> int:
     sub.add_parser("preflight")
     p_run = sub.add_parser("run")
     p_run.add_argument("--role", choices=("a", "b"), required=True)
+    p_att = sub.add_parser("attach")
+    p_att.add_argument("--role", choices=("a", "b"), required=True)
+    p_att.add_argument("--pod-id", required=True)
     p_term = sub.add_parser("terminate")
     p_term.add_argument("--pod-id", required=True)
     args = parser.parse_args()
@@ -391,6 +402,8 @@ def main() -> int:
     if args.cmd == "terminate":
         terminate(args.pod_id)
         return 0
+    if args.cmd == "attach":
+        return run(args.role, attach_pod_id=args.pod_id)
     return run(args.role)
 
 

@@ -213,8 +213,10 @@ def _load_identity_adapter(pipe: object, assets: ConcatIDAssets) -> None:
 
 
 def _write_output_video(output_path: Path, output: object) -> None:
+    # Never short-circuit on an existing file: a leftover MP4 from a prior run
+    # in the same output dir would be reported as a fresh success. Overwrite.
     if output_path.exists():
-        return
+        output_path.unlink()
     frames = getattr(output, "frames", output)
     frames_list = frames if isinstance(frames, list) else list(frames)
     if not frames_list:

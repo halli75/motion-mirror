@@ -142,9 +142,14 @@ def _scale_point(
 
 
 def _build_mask_frame(frame: np.ndarray) -> np.ndarray:
-    skeleton_pixels = np.any(frame > 0, axis=2)
-    mask = np.where(skeleton_pixels, np.uint8(0), np.uint8(255))
-    return cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+    # WanVACE mask convention: white (255) = generate this region, black (0) =
+    # preserve the control `video` verbatim. The skeleton is passed as the
+    # control video, so the whole frame must be marked for generation —
+    # otherwise the black skeleton lines get copied straight into the output
+    # (the "skeleton-as-output" failure). A full-white mask lets the model use
+    # the skeleton purely as a structural hint while synthesizing the character
+    # supplied via reference_images.
+    return np.full_like(frame, np.uint8(255))
 
 
 def _write_video(path: Path, frames: list[np.ndarray], fps: float) -> None:

@@ -300,9 +300,13 @@ def _generate_gguf(
         torch_dtype=dtype,
     )
     if config.offload_model:
-        # Sequential offload owns device placement; a manual t5_cpu move
-        # afterwards hits meta tensors and raises.
-        pipe.enable_sequential_cpu_offload()
+        # GGUF-quantized params carry a `quant_type` attribute that is lost when
+        # sequential offload round-trips each weight through the meta device
+        # (accelerate re-materializes them as plain meta tensors), later crashing
+        # in diffusers' GGUF utils with `KeyError: None`. Whole-module offload
+        # keeps each component intact on the CPU<->GPU hops, preserving quant
+        # metadata — the diffusers-recommended path for GGUF transformers.
+        pipe.enable_model_cpu_offload()
     else:
         pipe.to(config.device)
         if config.t5_cpu:

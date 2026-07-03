@@ -157,12 +157,14 @@ then
 fi
 
 # --- phase: model downloads (per group; failure skips dependent backends) ---
+# NB: do not name this GROUPS — bash's special GROUPS array silently ignores
+# assignments, which turns the loop variable into a group id.
 if [ "$ROLE" = a ]; then
-  GROUPS="dwpose light fast gguf extras identity"
+  MM_GROUPS="dwpose light fast gguf extras identity"
 else
-  GROUPS="dwpose wan-move"
+  MM_GROUPS="dwpose wan-move"
 fi
-for g in $GROUPS; do
+for g in $MM_GROUPS; do
   set_status "download-$g" false
   ok=false
   for attempt in 1 2; do

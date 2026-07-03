@@ -37,3 +37,51 @@ def test_fmt_spend_per_hr_handles_none_and_values():
     assert orch._fmt_spend_per_hr(None) == "0.000"
     assert orch._fmt_spend_per_hr(0.5) == "0.500"
     assert orch._fmt_spend_per_hr(1.25) == "1.250"
+
+
+def test_gql_retries_transient_timeouts(monkeypatch):
+    orch = _load_orchestrate_module()
+    monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+    monkeypatch.setattr(orch.time, "sleep", lambda _s: None)
+
+    calls = {"n": 0}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"data": {"ok": true}}'
+
+    def fake_urlopen(req, timeout):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise TimeoutError("read timed out")
+        return _Resp()
+
+    monkeypatch.setattr(orch.urllib.request, "urlopen", fake_urlopen)
+    assert orch.gql("query { x }") == {"ok": True}
+    assert calls["n"] == 3
+
+
+def test_gql_single_attempt_when_retries_1(monkeypatch):
+    orch = _load_orchestrate_module()
+    monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+    monkeypatch.setattr(orch.time, "sleep", lambda _s: None)
+
+    calls = {"n": 0}
+
+    def fake_urlopen(req, timeout):
+        calls["n"] += 1
+        raise TimeoutError("read timed out")
+
+    monkeypatch.setattr(orch.urllib.request, "urlopen", fake_urlopen)
+    try:
+        orch.gql("mutation { rent }", retries=1)
+        raise AssertionError("expected TimeoutError")
+    except TimeoutError:
+        pass
+    assert calls["n"] == 1

@@ -73,15 +73,33 @@ def _api_key() -> str:
     return key
 
 
-def gql(query: str, variables: dict | None = None) -> dict:
+def gql(query: str, variables: dict | None = None, retries: int = 3) -> dict:
+    """POST a GraphQL request, retrying transient network failures.
+
+    A single dropped read must not kill a run: the run loop's finally block
+    terminates the pod, so one flaky poll used to cost the whole GPU session.
+    Mutations that must not double-fire (pod rent) pass retries=1.
+    """
     body = json.dumps({"query": query, "variables": variables or {}}).encode()
-    req = urllib.request.Request(
-        GRAPHQL_URL,
-        data=body,
-        headers={**HEADERS, "Authorization": f"Bearer {_api_key()}"},
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.load(resp)
+    last_exc: Exception | None = None
+    for attempt in range(1, max(1, retries) + 1):
+        req = urllib.request.Request(
+            GRAPHQL_URL,
+            data=body,
+            headers={**HEADERS, "Authorization": f"Bearer {_api_key()}"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.load(resp)
+            break
+        except (TimeoutError, urllib.error.URLError, ConnectionError, OSError) as exc:
+            last_exc = exc
+            if attempt >= max(1, retries):
+                raise
+            print(f"gql transient failure (attempt {attempt}/{retries}): {exc}; retrying")
+            time.sleep(5 * attempt)
+    else:  # pragma: no cover - loop always breaks or raises
+        raise RuntimeError("unreachable") from last_exc
     if data.get("errors"):
         raise RuntimeError(f"GraphQL errors: {data['errors']}")
     return data["data"]
@@ -205,7 +223,9 @@ def launch(role: str) -> str:
         ports: "8000/http"
       }}) {{ id costPerHr }}
     }}"""
-    pod = gql(mutation)["podRentInterruptable"]
+    # retries=1: if the response is lost after the rent lands, a retry would
+    # silently rent a second (untracked, unguarded) pod.
+    pod = gql(mutation, retries=1)["podRentInterruptable"]
     print(f"launched pod {pod['id']} ({gpu}, bid ${bid}/hr, "
           f"costPerHr ${pod.get('costPerHr')})")
     state = _state()

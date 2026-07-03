@@ -38,6 +38,50 @@ def test_render_skeleton_frames_resamples_and_draws(tmp_path):
     assert any(np.any(frame > 0) for frame in frames)
 
 
+# Canonical OpenPose 18-joint palette (RGB order) — what VACE saw in training
+# via controlnet_aux draw_bodypose. Joint circles are drawn at full palette
+# color after the limb layer is dimmed, so exact palette values must appear.
+_CANONICAL_PALETTE_RGB = (
+    (255, 0, 0), (255, 85, 0), (255, 170, 0), (255, 255, 0), (170, 255, 0),
+    (85, 255, 0), (0, 255, 0), (0, 255, 85), (0, 255, 170), (0, 255, 255),
+    (0, 170, 255), (0, 85, 255), (0, 0, 255), (85, 0, 255), (170, 0, 255),
+    (255, 0, 255), (255, 0, 170), (255, 0, 85),
+)
+
+
+def test_render_skeleton_uses_canonical_openpose_palette(tmp_path):
+    pose = _make_pose_sequence(tmp_path, frames=1)
+    frames = render_skeleton_frames(pose, size=(128, 128), num_frames=1)
+    pixels = {tuple(int(v) for v in px) for px in frames[0].reshape(-1, 3)}
+
+    palette_bgr = {(b, g, r) for (r, g, b) in _CANONICAL_PALETTE_RGB}
+    assert len(palette_bgr & pixels) >= 3, (
+        "expected >=3 exact canonical OpenPose joint colors in the render"
+    )
+    # Old renderer drew white joints/limbs — out-of-distribution for VACE.
+    assert (255, 255, 255) not in pixels
+
+
+def test_render_skeleton_draws_synthesized_neck_joint(tmp_path):
+    keypoints = np.zeros((1, 133, 3), dtype=np.float32)
+    keypoints[0, 5] = (20, 20, 0.95)  # COCO L shoulder
+    keypoints[0, 6] = (40, 20, 0.95)  # COCO R shoulder
+    pose = PoseSequence(
+        source_video_path=tmp_path / "motion.mp4",
+        keypoints=keypoints,
+        frame_size=(64, 64),
+        fps=24.0,
+    )
+    out_w, out_h = 128, 128
+    frames = render_skeleton_frames(pose, size=(out_w, out_h), num_frames=1)
+
+    # Neck = midpoint of the shoulders, scaled into output space.
+    nx = round(30 * out_w / 64)
+    ny = round(20 * out_h / 64)
+    neck_bgr = (0, 85, 255)  # palette[1] (255, 85, 0) RGB -> BGR
+    assert tuple(int(v) for v in frames[0][ny, nx]) == neck_bgr
+
+
 def test_render_skeleton_conditioning_artifacts_writes_readable_videos(tmp_path):
     pose = _make_pose_sequence(tmp_path, frames=4)
     video_path = tmp_path / "pose.mp4"

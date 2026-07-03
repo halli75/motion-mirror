@@ -12,9 +12,9 @@
 set -uo pipefail
 
 ROLE="${MM_ROLE:?set MM_ROLE=a or b}"
-# MM_TIER_A=1 runs the lean re-validation set: just the three backends whose
-# fixes we are confirming (vace, gguf, fast). Skips sam2-vace, concat-id (needs
-# the unmerged Concat-ID fork), and the tier probe. Trims models + wall time.
+# MM_TIER_A=1 runs the lean re-validation set: the three backends whose fixes
+# we are confirming (vace, gguf, fast) plus the 12GB-tier VRAM probe. Skips
+# sam2-vace and concat-id (needs the unmerged Concat-ID fork).
 TIER_A="${MM_TIER_A:-0}"
 WS=/workspace
 REPO=$WS/repo
@@ -22,7 +22,7 @@ RV=$REPO/runpod-validation
 export HF_HOME=$WS/hf-cache
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-cd $WS
+cd "$WS" || exit 1
 mkdir -p status evidence evidence/smoke inputs mm-cache "$HF_HOME"
 
 # --- observability first: http server + heartbeat + tee'd console ---
@@ -100,7 +100,7 @@ if [ "$ROLE" = a ]; then
 else
   EXTRAS="cuda,gpu-inference,dev"
 fi
-if ! python3 -m pip install -e "$REPO[$EXTRAS]"; then
+if ! python3 -m pip install -e "${REPO}[$EXTRAS]"; then
   record_failure "pip install extras=$EXTRAS"
   finish aborted-pip-install
 fi
@@ -225,26 +225,48 @@ run_smoke() { # run_smoke <name> <backend> [extra args...]
   set_status "smoke-$name" false
   python3 "$SMOKE" --image "$IMAGE" --motion "$MOTION" --backend "$backend" \
     --cache-dir $WS/mm-cache --frames 17 --density 256 \
-    --output-dir $WS/evidence/smoke/$name --report $WS/evidence/smoke/$name.json \
+    --output-dir "$WS/evidence/smoke/$name" --report "$WS/evidence/smoke/$name.json" \
     "$@" || record_failure "smoke-$name"
+}
+
+run_tier_probe() { # 12GB-tier probe: t5_cpu only, no offload (register #11)
+  set_status tier-probe false
+  python3 "$RV/vace_tier_probe.py" --image "$IMAGE" --motion "$MOTION" \
+    --cache-dir "$WS/mm-cache" --output-dir "$WS/evidence/tier-probe" \
+    --report "$WS/evidence/tier-probe/vace-tier-probe.json" \
+    || record_failure "tier-probe"
 }
 
 # --- phase: smoke matrix ---
 if [ "$ROLE" = a ]; then
-  group_ok dwpose && group_ok light && run_smoke vace wan-1.3b-vace \
-    || record_failure "skip smoke-vace (missing models)"
-  group_ok dwpose && group_ok gguf && run_smoke gguf wan-move-gguf \
-    || record_failure "skip smoke-gguf (missing models)"
-  group_ok dwpose && group_ok fast && run_smoke fast wan-move-fast \
-    || record_failure "skip smoke-fast (missing models)"
+  if group_ok dwpose && group_ok light; then
+    run_smoke vace wan-1.3b-vace
+  else
+    record_failure "skip smoke-vace (missing models)"
+  fi
+  if group_ok dwpose && group_ok gguf; then
+    run_smoke gguf wan-move-gguf
+  else
+    record_failure "skip smoke-gguf (missing models)"
+  fi
+  if group_ok dwpose && group_ok fast; then
+    run_smoke fast wan-move-fast
+  else
+    record_failure "skip smoke-fast (missing models)"
+  fi
 
-  # Tier-A run stops here: sam2-vace, concat-id (needs the Concat-ID fork), and
-  # the tier probe are out of scope for confirming the three backend fixes.
-  if [ "$TIER_A" = 1 ]; then finish done-tier-a; fi
+  # Tier-A run stops after the three smokes + the 12GB-tier probe: sam2-vace
+  # and concat-id (needs the Concat-ID fork) stay out of scope.
+  if [ "$TIER_A" = 1 ]; then
+    if group_ok dwpose && group_ok light; then run_tier_probe; fi
+    finish done-tier-a
+  fi
 
-  group_ok dwpose && group_ok light && group_ok extras \
-    && run_smoke sam2-vace wan-1.3b-vace --reference-masker sam2 \
-    || record_failure "skip smoke-sam2-vace (missing models)"
+  if group_ok dwpose && group_ok light && group_ok extras; then
+    run_smoke sam2-vace wan-1.3b-vace --reference-masker sam2
+  else
+    record_failure "skip smoke-sam2-vace (missing models)"
+  fi
 
   # --- phase: concat-id identity smoke (pytest) ---
   if group_ok dwpose && group_ok identity; then
@@ -271,16 +293,13 @@ if [ "$ROLE" = a ]; then
   fi
 
   # --- phase: 12GB-tier probe (t5_cpu only, no offload) ---
-  if group_ok dwpose && group_ok light; then
-    set_status tier-probe false
-    python3 $RV/vace_tier_probe.py --image "$IMAGE" --motion "$MOTION" \
-      --cache-dir $WS/mm-cache --output-dir $WS/evidence/tier-probe \
-      --report $WS/evidence/tier-probe/vace-tier-probe.json \
-      || record_failure "tier-probe"
-  fi
+  if group_ok dwpose && group_ok light; then run_tier_probe; fi
 else
-  group_ok dwpose && group_ok wan-move && run_smoke full wan-move-14b \
-    || record_failure "skip smoke-full (missing models)"
+  if group_ok dwpose && group_ok wan-move; then
+    run_smoke full wan-move-14b
+  else
+    record_failure "skip smoke-full (missing models)"
+  fi
 fi
 
-finish done
+finish "done"

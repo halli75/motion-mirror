@@ -1,0 +1,58 @@
+# Manual-trigger GPU validation on RunPod.
+#
+# Never runs per-PR: each press rents a real spot GPU (~$0.5-1.5) and spot
+# capacity is flaky, so this stays a deliberate button. Usable from the
+# Actions tab once this file is on the default branch (merge PR #7 first).
+#
+# Requires the RUNPOD_API_KEY repository secret.
+name: GPU validate
+
+on:
+  workflow_dispatch:
+    inputs:
+      role:
+        description: "Pod role: a = 24GB matrix, b = 48GB wan-move-14b"
+        type: choice
+        options: ["a", "b"]
+        default: "a"
+      tier_a:
+        description: "MM_TIER_A: 1 = lean run (vace/gguf/fast + tier probe), 0 = full matrix"
+        type: choice
+        options: ["1", "0"]
+        default: "1"
+
+jobs:
+  gpu-validate:
+    name: RunPod GPU validation (role ${{ inputs.role }})
+    runs-on: ubuntu-latest
+    # Orchestrator enforces its own wall cap (~3.5h) and terminates the pod in
+    # a finally block; the job timeout is a backstop above that.
+    timeout-minutes: 210
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # orchestrate.py is stdlib-only — no installs needed.
+      - name: Preflight
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+        run: python runpod-validation/orchestrate.py preflight
+
+      - name: Run validation
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          MM_TIER_A: ${{ inputs.tier_a }}
+        run: python runpod-validation/orchestrate.py run --role ${{ inputs.role }}
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-evidence-role-${{ inputs.role }}
+          path: runpod-validation/evidence/
+          if-no-files-found: warn

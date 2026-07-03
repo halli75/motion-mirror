@@ -207,8 +207,13 @@ def _resolve_device(config: MotionMirrorConfig, torch: object) -> str:
 
 def _apply_memory_policy(pipe: object, config: MotionMirrorConfig, device: str) -> None:
     if config.offload_model and device.startswith("cuda") and hasattr(pipe, "enable_sequential_cpu_offload"):
+        # Sequential offload owns every submodule's device placement (weights
+        # become meta tensors behind hooks); a manual t5_cpu move afterwards
+        # raises "Cannot copy out of meta tensor".
         pipe.enable_sequential_cpu_offload()
-    elif hasattr(pipe, "to"):
+        return
+
+    if hasattr(pipe, "to"):
         pipe.to(device)
 
     if config.t5_cpu:

@@ -210,13 +210,15 @@ def _generate_real(
     )
     # Apply VRAM strategy based on config flags
     if config.offload_model:
+        # Sequential offload owns device placement; a manual t5_cpu move
+        # afterwards hits meta tensors and raises.
         pipe.enable_sequential_cpu_offload()
     else:
         pipe.to(config.device)
-    if config.t5_cpu:
-        text_encoder = getattr(pipe, "text_encoder", None)
-        if text_encoder is not None and hasattr(text_encoder, "to"):
-            text_encoder.to("cpu")
+        if config.t5_cpu:
+            text_encoder = getattr(pipe, "text_encoder", None)
+            if text_encoder is not None and hasattr(text_encoder, "to"):
+                text_encoder.to("cpu")
     pipe.enable_attention_slicing(1)
 
     char_image = _load_character_image(request.segmented_image_path)
@@ -298,13 +300,15 @@ def _generate_gguf(
         torch_dtype=dtype,
     )
     if config.offload_model:
+        # Sequential offload owns device placement; a manual t5_cpu move
+        # afterwards hits meta tensors and raises.
         pipe.enable_sequential_cpu_offload()
     else:
         pipe.to(config.device)
-    if config.t5_cpu:
-        text_encoder = getattr(pipe, "text_encoder", None)
-        if text_encoder is not None and hasattr(text_encoder, "to"):
-            text_encoder.to("cpu")
+        if config.t5_cpu:
+            text_encoder = getattr(pipe, "text_encoder", None)
+            if text_encoder is not None and hasattr(text_encoder, "to"):
+                text_encoder.to("cpu")
     pipe.enable_attention_slicing(1)
 
     char_image = _load_character_image(request.segmented_image_path)

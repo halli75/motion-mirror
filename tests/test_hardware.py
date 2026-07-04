@@ -66,7 +66,7 @@ def test_recommend_backend_16gb_gguf():
 def test_recommend_backend_just_below_gguf_threshold():
     backend, overrides = recommend_backend(12.2)
     assert backend == "wan-1.3b-vace"
-    assert overrides == {"t5_cpu": True}
+    assert overrides == {"offload_model": True, "t5_cpu": True}
 
 
 def test_recommend_backend_13gb_routes_to_gguf():
@@ -81,20 +81,11 @@ def test_recommend_backend_11_5_falls_to_min_vace():
     assert overrides == {"offload_model": True, "t5_cpu": True}
 
 
-def test_recommend_backend_12_1_mid_vace_t5_cpu_only():
-    backend, overrides = recommend_backend(12.1)
-    assert backend == "wan-1.3b-vace"
-    assert overrides == {"t5_cpu": True}
-
-
-def test_recommend_backend_12gb_vace_t5_cpu():
+def test_recommend_backend_12gb_vace_full_offload():
+    # The t5_cpu-only middle tier was removed after the 2026-07-03 GPU probe
+    # (15.07 GB transient peak + VAE dtype crash): 12 GB cards use the same
+    # fully-offloaded vace config as the 9 GB floor.
     backend, overrides = recommend_backend(12.0)
-    assert backend == "wan-1.3b-vace"
-    assert overrides == {"t5_cpu": True}
-
-
-def test_recommend_backend_just_below_mid_threshold():
-    backend, overrides = recommend_backend(11.9)
     assert backend == "wan-1.3b-vace"
     assert overrides == {"offload_model": True, "t5_cpu": True}
 
@@ -153,8 +144,8 @@ def test_auto_config_without_gpu_raises():
         (23.9, "wan-move-gguf", True, True),
         (16.0, "wan-move-gguf", True, True),
         (13.0, "wan-move-gguf", True, True),
-        (12.2, "wan-1.3b-vace", False, True),
-        (12.0, "wan-1.3b-vace", False, True),
+        (12.2, "wan-1.3b-vace", True, True),
+        (12.0, "wan-1.3b-vace", True, True),
         (11.9, "wan-1.3b-vace", True, True),
         (9.5, "wan-1.3b-vace", True, True),
     ],
@@ -193,7 +184,7 @@ def test_recommend_backend_just_below_threshold():
 def test_recommend_backend_12gb():
     backend, overrides = recommend_backend(12.0)
     assert backend == "wan-1.3b-vace"
-    assert overrides == {"t5_cpu": True}
+    assert overrides == {"offload_model": True, "t5_cpu": True}
 
 
 def test_auto_config_resolves_backend_and_overrides():

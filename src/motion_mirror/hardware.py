@@ -13,9 +13,12 @@ _FULL_MODEL_VRAM_GB = 40.0
 _FAST_MODEL_VRAM_GB = 24.0
 # Peaks measured in v0.2a GPU validation (RTX 4090/3090, 17-frame smoke,
 # offload_model + t5_cpu): gguf 11.28 GB, vace 8.02 GB.
+# A 12 GB t5_cpu-only middle tier was probed on GPU 2026-07-03 and removed:
+# pipe.to(cuda) transiently peaked at 15.07 GB (T5 lands on GPU before the
+# t5_cpu move) and generation then crashed at VAE encode (bf16 input into the
+# fp32 VAE without accelerate's auto-casting offload hooks). 12 GB cards use
+# the fully-offloaded vace tier below.
 _GGUF_MODEL_VRAM_GB = 11.28 + _HEADROOM_GB
-# t5_cpu-only config never GPU-measured — confirm via Wave-2 tier probe.
-_MID_TIER_VRAM_GB = 12.0
 _MIN_VRAM_GB = 8.02 + _HEADROOM_GB
 
 
@@ -32,7 +35,6 @@ _BACKEND_TIERS: tuple[BackendTier, ...] = (
     BackendTier(_FULL_MODEL_VRAM_GB, "wan-move-14b"),
     BackendTier(_FAST_MODEL_VRAM_GB, "wan-move-fast", (("offload_model", True), ("t5_cpu", True))),
     BackendTier(_GGUF_MODEL_VRAM_GB, "wan-move-gguf", (("offload_model", True), ("t5_cpu", True))),
-    BackendTier(_MID_TIER_VRAM_GB, "wan-1.3b-vace", (("t5_cpu", True),)),
     BackendTier(_MIN_VRAM_GB, "wan-1.3b-vace", (("offload_model", True), ("t5_cpu", True))),
 )
 

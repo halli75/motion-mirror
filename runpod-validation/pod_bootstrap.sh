@@ -3,7 +3,7 @@
 #   cd /workspace && git clone -b runpod-v02a-validation <repo> repo \
 #     && MM_ROLE=a bash repo/runpod-validation/pod_bootstrap.sh
 #
-# MM_ROLE=a : 24 GB matrix (vace, gguf, fast, sam2-vace, concat-id, tier probe)
+# MM_ROLE=a : 24 GB matrix (vace, gguf, fast, sam2-vace, concat-id)
 # MM_ROLE=b : 48 GB wan-move-14b only
 #
 # No SSH: evidence is served by python http.server on :8000 and fetched by
@@ -12,13 +12,12 @@
 set -uo pipefail
 
 ROLE="${MM_ROLE:?set MM_ROLE=a or b}"
-# MM_TIER_A=1 runs the lean re-validation set: the three backends whose fixes
-# we are confirming (vace, gguf, fast) plus the 12GB-tier VRAM probe. Skips
-# sam2-vace and concat-id (needs the unmerged Concat-ID fork).
+# MM_TIER_A=1 runs the lean re-validation set: just vace + gguf, the backends
+# whose fixes we are confirming. Skips fast (known flash_attn ABI blocker,
+# Wave-3), sam2-vace, and concat-id (needs the unmerged Concat-ID fork).
 TIER_A="${MM_TIER_A:-0}"
 WS=/workspace
 REPO=$WS/repo
-RV=$REPO/runpod-validation
 export HF_HOME=$WS/hf-cache
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
@@ -95,7 +94,9 @@ PY
 # --- phase: pip install (ABORT on failure) ---
 set_status pip-install false
 python3 -m pip install -U pip >/dev/null 2>&1
-if [ "$ROLE" = a ]; then
+if [ "$ROLE" = a ] && [ "$TIER_A" = 1 ]; then
+  EXTRAS="cuda,gpu-inference,gguf,dev"
+elif [ "$ROLE" = a ]; then
   EXTRAS="cuda,gpu-inference,gguf,lightx2v,concat-id,dev"
 else
   EXTRAS="cuda,gpu-inference,dev"
@@ -112,8 +113,8 @@ fi
 # matching the image's torch 2.8 / cu12 / py3.11 — never a source build (that
 # takes 30+ min). A wrong-ABI wheel installs but crashes on import, so verify
 # the import and fall back to the other ABI. Best-effort: fast smoke is skipped
-# if neither works.
-if [ "$ROLE" = a ]; then
+# if neither works. Tier-A skips it entirely (fast is out of scope there).
+if [ "$ROLE" = a ] && [ "$TIER_A" != 1 ]; then
   # --no-deps is critical: without it pip reinstalls flash-attn's `torch`
   # dependency and clobbers the image's CUDA build, breaking cuda for ALL
   # backends. einops (its other dep) is already present via diffusers.
@@ -195,7 +196,7 @@ fi
 # NB: do not name this GROUPS — bash's special GROUPS array silently ignores
 # assignments, which turns the loop variable into a group id.
 if [ "$ROLE" = a ] && [ "$TIER_A" = 1 ]; then
-  MM_GROUPS="dwpose light gguf fast"
+  MM_GROUPS="dwpose light gguf"
 elif [ "$ROLE" = a ]; then
   MM_GROUPS="dwpose light fast gguf extras identity"
 else
@@ -229,14 +230,6 @@ run_smoke() { # run_smoke <name> <backend> [extra args...]
     "$@" || record_failure "smoke-$name"
 }
 
-run_tier_probe() { # 12GB-tier probe: t5_cpu only, no offload (register #11)
-  set_status tier-probe false
-  python3 "$RV/vace_tier_probe.py" --image "$IMAGE" --motion "$MOTION" \
-    --cache-dir "$WS/mm-cache" --output-dir "$WS/evidence/tier-probe" \
-    --report "$WS/evidence/tier-probe/vace-tier-probe.json" \
-    || record_failure "tier-probe"
-}
-
 # --- phase: smoke matrix ---
 if [ "$ROLE" = a ]; then
   if group_ok dwpose && group_ok light; then
@@ -249,17 +242,14 @@ if [ "$ROLE" = a ]; then
   else
     record_failure "skip smoke-gguf (missing models)"
   fi
+  # Tier-A run stops after vace + gguf: fast (flash_attn ABI, Wave-3),
+  # sam2-vace, and concat-id (needs the Concat-ID fork) stay out of scope.
+  if [ "$TIER_A" = 1 ]; then finish done-tier-a; fi
+
   if group_ok dwpose && group_ok fast; then
     run_smoke fast wan-move-fast
   else
     record_failure "skip smoke-fast (missing models)"
-  fi
-
-  # Tier-A run stops after the three smokes + the 12GB-tier probe: sam2-vace
-  # and concat-id (needs the Concat-ID fork) stay out of scope.
-  if [ "$TIER_A" = 1 ]; then
-    if group_ok dwpose && group_ok light; then run_tier_probe; fi
-    finish done-tier-a
   fi
 
   if group_ok dwpose && group_ok light && group_ok extras; then
@@ -291,9 +281,6 @@ if [ "$ROLE" = a ]; then
   else
     record_failure "skip concat-id (missing models)"
   fi
-
-  # --- phase: 12GB-tier probe (t5_cpu only, no offload) ---
-  if group_ok dwpose && group_ok light; then run_tier_probe; fi
 else
   if group_ok dwpose && group_ok wan-move; then
     run_smoke full wan-move-14b

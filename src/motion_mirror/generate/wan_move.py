@@ -509,12 +509,22 @@ def _resolve_wan_gguf_base_source(config: MotionMirrorConfig) -> str:
     # components (VAE, text/image encoders); the GGUF transformer itself is 480P,
     # so there is a known 720P/480P provenance mismatch on the base weights.
     model_dir = config.cache_dir / "wan-move"
-    if model_dir.exists() and (model_dir / "model_index.json").exists():
+    if not model_dir.exists():
+        # First-time path: no local cache at all, so the hub download is the
+        # legitimate way to obtain the base components. Only an *incomplete*
+        # cache must raise (register #8) — absence is not corruption.
+        print(
+            f"Wan GGUF base components not cached at {model_dir}; "
+            f"downloading from {_WAN_GGUF_BASE_MODEL_ID} (multi-GB, one-time)."
+        )
+        return _WAN_GGUF_BASE_MODEL_ID
+    if (model_dir / "model_index.json").exists():
         return str(model_dir)
     raise FileNotFoundError(
-        f"Wan GGUF base pipeline components not found in {model_dir}.\n"
+        f"Wan GGUF base pipeline cache at {model_dir} is incomplete "
+        "(model_index.json missing).\n"
         "The GGUF backend reuses the wan-move base weights (VAE, encoders).\n"
-        "Run: motion-mirror download --model wan-move"
+        "Re-run: motion-mirror download --model wan-move"
     )
 
 

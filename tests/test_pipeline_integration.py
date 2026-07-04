@@ -134,22 +134,54 @@ def test_pipeline_runs_twice_without_error(tmp_path):
     assert r2.output_path.exists()
 
 
-def test_pipeline_controlnet_backend(tmp_path):
+def test_pipeline_mock_backend(tmp_path):
     img = _make_image(tmp_path / "char.png")
     vid = _make_video(tmp_path / "motion.mp4", frames=5)
     cfg = MotionMirrorConfig(
         project_root=tmp_path,
-        backend="mock",   # controlnet mock also triggered by cfg.backend == "mock"
+        backend="mock",  # mock path is served by generate/vace.py
         device="cpu",
         resolution="128x64",
         num_frames=4,
         trajectory_density=32,
     )
-    # Override the backend selection path via GenerationRequest backend field
-    # by temporarily patching — instead, test the pipeline routes correctly
-    # when backend = "mock" (covers the wan_move branch, which is the mock)
     result = MotionMirrorPipeline(cfg).run(img, vid)
     assert result.output_path.exists()
+
+
+def test_pipeline_mock_backend_routes_through_generate_vace(tmp_path):
+    """Every backend, including mock, dispatches through generate/vace.py."""
+    from unittest.mock import patch
+
+    import motion_mirror.generate.vace as vace_mod
+
+    img = _make_image(tmp_path / "char.png")
+    vid = _make_video(tmp_path / "motion.mp4", frames=5)
+    cfg = MotionMirrorConfig(
+        project_root=tmp_path,
+        backend="mock",
+        device="cpu",
+        resolution="128x64",
+        num_frames=4,
+        trajectory_density=32,
+    )
+
+    real = vace_mod.generate_with_vace
+    results = []
+
+    def wrapper(*args, **kwargs):
+        result = real(*args, **kwargs)
+        results.append(result)
+        return result
+
+    with patch(
+        "motion_mirror.pipeline.generate_with_vace",
+        side_effect=wrapper,
+    ) as spy:
+        MotionMirrorPipeline(cfg).run(img, vid)
+
+    assert spy.call_count == 1
+    assert results[0].backend == "mock"
 
 
 # ── Error handling ────────────────────────────────────────────────────────────

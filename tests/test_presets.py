@@ -38,3 +38,18 @@ def test_preset_contents_match():
         assert root_file.read_text(encoding="utf-8") == packaged.read_text(encoding="utf-8"), (
             f"repo-root presets/{packaged.name} content differs from packaged copy"
         )
+
+
+def test_vace_presets_satisfy_frame_constraint():
+    """The real VACE path requires num_frames = 4k+1; shipped presets must comply."""
+    import tomllib
+
+    for packaged in _packaged_toml_files():
+        data = tomllib.loads(packaged.read_text(encoding="utf-8")).get("preset", {})
+        if data.get("backend") == "mock":
+            continue
+        frames = data.get("num_frames")
+        assert frames is not None, f"{packaged.name} is missing num_frames"
+        assert (frames - 1) % 4 == 0, (
+            f"{packaged.name}: num_frames={frames} violates the VACE 4k+1 frame rule"
+        )

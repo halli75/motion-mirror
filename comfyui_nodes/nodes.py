@@ -64,7 +64,7 @@ class MotionMirrorPoseExtract:
 
         model_management.maybe_throw_if_interrupted()
         config = MotionMirrorConfig(
-            backend="mock" if mock else "wan-move-14b",
+            backend="mock" if mock else "wan-1.3b-vace",
             device=device,
         )
         pose = extract_pose(path, config)
@@ -156,11 +156,7 @@ class MotionMirrorGenerate:
                 "backend": (
                     [
                         "auto",
-                        "wan-move-14b",
-                        "wan-move-fast",
-                        "wan-move-gguf",
                         "wan-1.3b-vace",
-                        "wan-1.3b-concat-id",
                         "mock",
                     ],
                     {"default": "auto"},

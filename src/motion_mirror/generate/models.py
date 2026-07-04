@@ -16,11 +16,10 @@ class GenerationRequest:
     segmented_image_path: Path
     trajectory_map_path: Path
     output_path: Path
-    identity_image_path: Path | None = None
     conditioning_video_path: Path | None = None
     conditioning_mask_path: Path | None = None
 
-    backend: str = "wan-move-14b"
+    backend: str = "wan-1.3b-vace"
     resolution: str = "832x480"
     frames: int = 81
     device: str = "cuda"

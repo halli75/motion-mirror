@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
 # Motion Mirror GPU validation — runs ON a RunPod pod, launched via dockerArgs:
 #   cd /workspace && git clone -b runpod-v02a-validation <repo> repo \
-#     && MM_ROLE=a bash repo/runpod-validation/pod_bootstrap.sh
+#     && bash repo/runpod-validation/pod_bootstrap.sh
 #
-# MM_ROLE=a : 24 GB matrix (vace, gguf, fast, sam2-vace, concat-id)
-# MM_ROLE=b : 48 GB wan-move-14b only
+# VACE-only lineup (v0.3): validates the wan-1.3b-vace backend on a 24 GB-class
+# GPU with the pose reference-masker (vace smoke) and the SAM-2 reference-masker
+# (sam2-vace smoke).
 #
 # No SSH: evidence is served by python http.server on :8000 and fetched by
 # the local orchestrator through the RunPod proxy. The pod stays alive after
 # DONE (sleep) so the orchestrator can pull files; the orchestrator terminates it.
 set -uo pipefail
 
-ROLE="${MM_ROLE:?set MM_ROLE=a or b}"
-# MM_TIER_A=1 runs the lean re-validation set: just vace + gguf, the backends
-# whose fixes we are confirming. Skips fast (known flash_attn ABI blocker,
-# Wave-3), sam2-vace, and concat-id (needs the unmerged Concat-ID fork).
-TIER_A="${MM_TIER_A:-0}"
+ROLE=vace
 WS=/workspace
 REPO=$WS/repo
 export HF_HOME=$WS/hf-cache
@@ -94,43 +91,15 @@ PY
 # --- phase: pip install (ABORT on failure) ---
 set_status pip-install false
 python3 -m pip install -U pip >/dev/null 2>&1
-if [ "$ROLE" = a ] && [ "$TIER_A" = 1 ]; then
-  EXTRAS="cuda,gpu-inference,gguf,dev"
-elif [ "$ROLE" = a ]; then
-  EXTRAS="cuda,gpu-inference,gguf,lightx2v,concat-id,dev"
-else
-  EXTRAS="cuda,gpu-inference,dev"
-fi
+EXTRAS="cuda,gpu-inference,dev"
 if ! python3 -m pip install -e "${REPO}[$EXTRAS]"; then
   record_failure "pip install extras=$EXTRAS"
   finish aborted-pip-install
 fi
-if [ "$ROLE" = a ] && [ "$TIER_A" != 1 ]; then
-  python3 -m pip install "git+https://github.com/facebookresearch/sam2.git" \
-    || record_failure "pip install sam2"
-fi
-# fast backend: LightX2V eagerly imports flash_attn. Install a PREBUILT wheel
-# matching the image's torch 2.8 / cu12 / py3.11 — never a source build (that
-# takes 30+ min). A wrong-ABI wheel installs but crashes on import, so verify
-# the import and fall back to the other ABI. Best-effort: fast smoke is skipped
-# if neither works. Tier-A skips it entirely (fast is out of scope there).
-if [ "$ROLE" = a ] && [ "$TIER_A" != 1 ]; then
-  # --no-deps is critical: without it pip reinstalls flash-attn's `torch`
-  # dependency and clobbers the image's CUDA build, breaking cuda for ALL
-  # backends. einops (its other dep) is already present via diffusers.
-  fa_base="https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3.post1"
-  fa_ok=false
-  for abi in abiTRUE abiFALSE; do
-    whl="flash_attn-2.8.3.post1+cu12torch2.8cxx11${abi}-cp311-cp311-linux_x86_64.whl"
-    python3 -m pip install --no-deps "$fa_base/$whl" || continue
-    if python3 -c "import flash_attn" 2>/dev/null; then fa_ok=true; break; fi
-    python3 -m pip uninstall -y flash-attn >/dev/null 2>&1
-  done
-  $fa_ok || record_failure "flash-attn install (fast backend may fail)"
-  # Guarantee the extras' CUDA torch is intact regardless of the above.
-  python3 -c "import torch; assert torch.cuda.is_available()" \
-    || record_failure "torch CUDA broken after flash-attn attempt"
-fi
+# SAM-2 reference-masker (sam2-vace smoke): no PyPI package, install from
+# GitHub. Best-effort — the sam2-vace smoke is skipped if this fails.
+python3 -m pip install "git+https://github.com/facebookresearch/sam2.git" \
+  || record_failure "pip install sam2"
 if ! python3 -c "import torch; assert torch.cuda.is_available(), 'CUDA gone after installs'"; then
   record_failure "torch CUDA sanity check failed after pip installs"
   finish aborted-cuda-sanity
@@ -195,13 +164,8 @@ fi
 # --- phase: model downloads (per group; failure skips dependent backends) ---
 # NB: do not name this GROUPS — bash's special GROUPS array silently ignores
 # assignments, which turns the loop variable into a group id.
-if [ "$ROLE" = a ] && [ "$TIER_A" = 1 ]; then
-  MM_GROUPS="dwpose light gguf"
-elif [ "$ROLE" = a ]; then
-  MM_GROUPS="dwpose light fast gguf extras identity"
-else
-  MM_GROUPS="dwpose wan-move"
-fi
+# vace = wan-1.3b-vace weights; extras = SAM-2 (for the sam2-vace smoke).
+MM_GROUPS="dwpose vace extras"
 for g in $MM_GROUPS; do
   set_status "download-$g" false
   ok=false
@@ -230,63 +194,17 @@ run_smoke() { # run_smoke <name> <backend> [extra args...]
     "$@" || record_failure "smoke-$name"
 }
 
-# --- phase: smoke matrix ---
-if [ "$ROLE" = a ]; then
-  if group_ok dwpose && group_ok light; then
-    run_smoke vace wan-1.3b-vace
-  else
-    record_failure "skip smoke-vace (missing models)"
-  fi
-  if group_ok dwpose && group_ok gguf; then
-    run_smoke gguf wan-move-gguf
-  else
-    record_failure "skip smoke-gguf (missing models)"
-  fi
-  # Tier-A run stops after vace + gguf: fast (flash_attn ABI, Wave-3),
-  # sam2-vace, and concat-id (needs the Concat-ID fork) stay out of scope.
-  if [ "$TIER_A" = 1 ]; then finish done-tier-a; fi
-
-  if group_ok dwpose && group_ok fast; then
-    run_smoke fast wan-move-fast
-  else
-    record_failure "skip smoke-fast (missing models)"
-  fi
-
-  if group_ok dwpose && group_ok light && group_ok extras; then
-    run_smoke sam2-vace wan-1.3b-vace --reference-masker sam2
-  else
-    record_failure "skip smoke-sam2-vace (missing models)"
-  fi
-
-  # --- phase: concat-id identity smoke (pytest) ---
-  if group_ok dwpose && group_ok identity; then
-    set_status concat-id false
-    mkdir -p $WS/evidence/concat-id
-    MOTION_MIRROR_GPU_CONCAT_ID=1 \
-    MOTION_MIRROR_GPU_IMAGE=$IMAGE \
-    MOTION_MIRROR_GPU_MOTION=$MOTION \
-    MOTION_MIRROR_GPU_CACHE_DIR=$WS/mm-cache \
-    MOTION_MIRROR_GPU_FRAMES=17 \
-      python3 -m pytest -m gpu \
-        "$REPO/tests/test_gpu_smoke_runs.py::test_concat_id_identity_gpu_pipeline_smoke" \
-        -v --basetemp=$WS/evidence/concat-id --junitxml=$WS/evidence/concat-id/junit.xml \
-      || record_failure "concat-id pytest"
-    mkdir -p $WS/evidence/identity-comparison
-    vace_mp4=$(find $WS/evidence/smoke/vace -name '*.mp4' | head -1)
-    cid_mp4=$(find $WS/evidence/concat-id -name '*.mp4' | head -1)
-    [ -n "$vace_mp4" ] && cp "$vace_mp4" $WS/evidence/identity-comparison/vace.mp4
-    [ -n "$cid_mp4" ] && cp "$cid_mp4" $WS/evidence/identity-comparison/concat-id.mp4
-    printf '%s\n' '{"note": "same image/motion/frames on both backends; qualitative identity judgment deferred to human review"}' \
-      >$WS/evidence/identity-comparison/note.json
-  else
-    record_failure "skip concat-id (missing models)"
-  fi
+# --- phase: smoke matrix (VACE-only) ---
+if group_ok dwpose && group_ok vace; then
+  run_smoke vace wan-1.3b-vace
 else
-  if group_ok dwpose && group_ok wan-move; then
-    run_smoke full wan-move-14b
-  else
-    record_failure "skip smoke-full (missing models)"
-  fi
+  record_failure "skip smoke-vace (missing models)"
+fi
+
+if group_ok dwpose && group_ok vace && group_ok extras; then
+  run_smoke sam2-vace wan-1.3b-vace --reference-masker sam2
+else
+  record_failure "skip smoke-sam2-vace (missing models)"
 fi
 
 finish "done"

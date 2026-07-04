@@ -212,7 +212,7 @@ def test_segment_sam2_real_produces_valid_mask(tmp_path):
     _sam2_predictors.clear()
 
     cfg = MotionMirrorConfig(
-        backend="wan-move-14b", segmenter="sam2",
+        backend="wan-1.3b-vace", segmenter="sam2",
         device="cuda", project_root=tmp_path,
     )
     # Use a solid-colour image — SAM-2 should still return a valid mask

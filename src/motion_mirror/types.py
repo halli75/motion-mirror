@@ -108,7 +108,7 @@ class TrajectoryMap:
 
 @dataclass(slots=True)
 class GenerationResult:
-    """Output of generate_with_wan_move() / generate_with_controlnet()."""
+    """Output of generate_with_vace()."""
 
     video_path: Path
     backend: str

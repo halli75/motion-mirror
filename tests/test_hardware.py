@@ -1,4 +1,8 @@
-"""Tests for GPU detection and backend recommendation."""
+"""Tests for GPU detection and single-tier backend recommendation.
+
+v0.3 is VACE-only: every GPU at or above the floor resolves to the same
+fully-offloaded ``wan-1.3b-vace`` config; anything below raises.
+"""
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -8,12 +12,14 @@ import pytest
 from motion_mirror.config import MotionMirrorConfig
 from motion_mirror.exceptions import HardwareError, InsufficientVRAMError, MotionMirrorError
 from motion_mirror.hardware import (
-    _BACKEND_TIERS,
     GPUInfo,
     auto_config,
     get_gpu_info,
     recommend_backend,
 )
+
+_FLOOR_GB = 9.02  # 8.02 measured peak + 1.0 headroom
+_OVERRIDES = {"offload_model": True, "t5_cpu": True}
 
 
 def test_gpu_info_used_vram():
@@ -33,89 +39,22 @@ def test_get_gpu_info_never_raises():
         pytest.fail(f"get_gpu_info() raised unexpectedly: {exc}")
 
 
-def test_recommend_backend_high_vram():
-    backend, overrides = recommend_backend(40.0)
-    assert backend == "wan-move-14b"
-    assert overrides == {}
-
-
-def test_recommend_backend_just_below_full_model_threshold():
-    backend, overrides = recommend_backend(39.9)
-    assert backend == "wan-move-fast"
-    assert overrides == {"offload_model": True, "t5_cpu": True}
-
-
-def test_recommend_backend_24gb_fast():
-    backend, overrides = recommend_backend(24.0)
-    assert backend == "wan-move-fast"
-    assert overrides == {"offload_model": True, "t5_cpu": True}
-
-
-def test_recommend_backend_just_below_fast_threshold():
-    backend, overrides = recommend_backend(23.9)
-    assert backend == "wan-move-gguf"
-    assert overrides == {"offload_model": True, "t5_cpu": True}
-
-
-def test_recommend_backend_16gb_gguf():
-    backend, overrides = recommend_backend(16.0)
-    assert backend == "wan-move-gguf"
-    assert overrides == {"offload_model": True, "t5_cpu": True}
-
-
-def test_recommend_backend_just_below_gguf_threshold():
-    backend, overrides = recommend_backend(12.2)
+@pytest.mark.parametrize("free_vram_gb", [9.02, 10.0, 24.0, 48.0])
+def test_recommend_backend_at_or_above_floor_is_always_vace(free_vram_gb):
+    # Single tier: even a 48 GB card returns vace with both memory overrides.
+    backend, overrides = recommend_backend(free_vram_gb)
     assert backend == "wan-1.3b-vace"
-    assert overrides == {"offload_model": True, "t5_cpu": True}
+    assert overrides == _OVERRIDES
 
 
-def test_recommend_backend_13gb_routes_to_gguf():
-    backend, overrides = recommend_backend(13.0)
-    assert backend == "wan-move-gguf"
-    assert overrides == {"offload_model": True, "t5_cpu": True}
-
-
-def test_recommend_backend_11_5_falls_to_min_vace():
-    backend, overrides = recommend_backend(11.5)
-    assert backend == "wan-1.3b-vace"
-    assert overrides == {"offload_model": True, "t5_cpu": True}
-
-
-def test_recommend_backend_12gb_vace_full_offload():
-    # The t5_cpu-only middle tier was removed after the 2026-07-03 GPU probe
-    # (15.07 GB transient peak + VAE dtype crash): 12 GB cards use the same
-    # fully-offloaded vace config as the 9 GB floor.
-    backend, overrides = recommend_backend(12.0)
-    assert backend == "wan-1.3b-vace"
-    assert overrides == {"offload_model": True, "t5_cpu": True}
-
-
-def test_recommend_backend_9_5gb_activates_offload():
-    backend, overrides = recommend_backend(9.5)
-    assert backend == "wan-1.3b-vace"
-    assert overrides == {"offload_model": True, "t5_cpu": True}
-
-
-def test_recommend_backend_9_02gb_boundary():
-    backend, overrides = recommend_backend(9.02)
-    assert backend == "wan-1.3b-vace"
-    assert overrides == {"offload_model": True, "t5_cpu": True}
-
-
-def test_recommend_backend_insufficient_raises():
+def test_recommend_backend_just_below_floor_raises():
     with pytest.raises(InsufficientVRAMError) as exc_info:
-        recommend_backend(8.5)
-    assert exc_info.value.available_gb == pytest.approx(8.5)
-    assert exc_info.value.required_gb == pytest.approx(9.02)
+        recommend_backend(9.01)
+    assert exc_info.value.available_gb == pytest.approx(9.01)
+    assert exc_info.value.required_gb == pytest.approx(_FLOOR_GB)
     message = str(exc_info.value)
     assert "9.02 GB" in message
     assert "wan-1.3b-vace" in message
-
-
-def test_backend_tiers_strictly_descend_by_floor():
-    floors = [tier.minimum_vram_gb for tier in _BACKEND_TIERS]
-    assert floors == sorted(floors, reverse=True)
-    assert len(set(floors)) == len(floors)
 
 
 def test_recommend_backend_zero_vram_raises():
@@ -129,72 +68,40 @@ def test_auto_config_without_gpu_raises():
         with pytest.raises(InsufficientVRAMError) as exc_info:
             auto_config(cfg)
     assert exc_info.value.available_gb == 0.0
-    assert exc_info.value.required_gb == pytest.approx(9.02)
+    assert exc_info.value.required_gb == pytest.approx(_FLOOR_GB)
     message = str(exc_info.value)
     assert "no CUDA GPU" in message
     assert "--backend mock" in message
 
 
-@pytest.mark.parametrize(
-    ("free_vram_gb", "expected_backend", "expected_offload", "expected_t5_cpu"),
-    [
-        (40.0, "wan-move-14b", False, False),
-        (39.9, "wan-move-fast", True, True),
-        (24.0, "wan-move-fast", True, True),
-        (23.9, "wan-move-gguf", True, True),
-        (16.0, "wan-move-gguf", True, True),
-        (13.0, "wan-move-gguf", True, True),
-        (12.2, "wan-1.3b-vace", True, True),
-        (12.0, "wan-1.3b-vace", True, True),
-        (11.9, "wan-1.3b-vace", True, True),
-        (9.5, "wan-1.3b-vace", True, True),
-    ],
-)
-def test_auto_config_resolves_mocked_vram_boundaries(
-    free_vram_gb,
-    expected_backend,
-    expected_offload,
-    expected_t5_cpu,
-):
-    cfg = MotionMirrorConfig(backend="auto", offload_model=False, t5_cpu=False)
-    gpu = GPUInfo(
-        name="Mock GPU",
-        total_vram_gb=max(40.0, free_vram_gb),
-        free_vram_gb=free_vram_gb,
-    )
-    with patch("motion_mirror.hardware.get_gpu_info", return_value=gpu):
-        resolved = auto_config(cfg)
-    assert resolved.backend == expected_backend
-    assert resolved.offload_model is expected_offload
-    assert resolved.t5_cpu is expected_t5_cpu
-
-
-def test_recommend_backend_24gb():
-    backend, overrides = recommend_backend(24.0)
-    assert backend == "wan-move-fast"
-    assert overrides == {"offload_model": True, "t5_cpu": True}
-
-
-def test_recommend_backend_just_below_threshold():
-    backend, overrides = recommend_backend(23.9)
-    assert backend == "wan-move-gguf"
-    assert overrides == {"offload_model": True, "t5_cpu": True}
-
-
-def test_recommend_backend_12gb():
-    backend, overrides = recommend_backend(12.0)
-    assert backend == "wan-1.3b-vace"
-    assert overrides == {"offload_model": True, "t5_cpu": True}
-
-
 def test_auto_config_resolves_backend_and_overrides():
     cfg = MotionMirrorConfig(backend="auto", offload_model=False, t5_cpu=False)
-    gpu = GPUInfo(name="RTX 4060", total_vram_gb=8.0, free_vram_gb=9.5)
+    gpu = GPUInfo(name="RTX 4060", total_vram_gb=12.0, free_vram_gb=9.5)
     with patch("motion_mirror.hardware.get_gpu_info", return_value=gpu):
         resolved = auto_config(cfg)
     assert resolved.backend == "wan-1.3b-vace"
     assert resolved.offload_model is True
     assert resolved.t5_cpu is True
+
+
+def test_auto_config_huge_vram_still_resolves_to_vace_with_overrides():
+    # Single-tier semantics: a 48 GB card doesn't unlock a heavier backend.
+    cfg = MotionMirrorConfig(backend="auto", offload_model=False, t5_cpu=False)
+    gpu = GPUInfo(name="A6000", total_vram_gb=48.0, free_vram_gb=48.0)
+    with patch("motion_mirror.hardware.get_gpu_info", return_value=gpu):
+        resolved = auto_config(cfg)
+    assert resolved.backend == "wan-1.3b-vace"
+    assert resolved.offload_model is True
+    assert resolved.t5_cpu is True
+
+
+def test_auto_config_passes_non_auto_backend_through_unchanged():
+    cfg = MotionMirrorConfig(backend="mock", device="cpu")
+    # get_gpu_info must not even be consulted for a concrete backend.
+    with patch("motion_mirror.hardware.get_gpu_info", side_effect=AssertionError("should not probe GPU")):
+        resolved = auto_config(cfg)
+    assert resolved is cfg
+    assert resolved.backend == "mock"
 
 
 def test_insufficient_vram_error_is_hardware_error():

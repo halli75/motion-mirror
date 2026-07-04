@@ -1,14 +1,13 @@
 """Local RunPod orchestrator for Motion Mirror GPU validation. No SSH.
 
-Launches one spot pod per role, polls progress via the pod's http.server
-(through the RunPod proxy), pulls evidence, and ALWAYS terminates the pods
-it created — and only those (the account may have unrelated pods running).
+Launches one spot pod, polls progress via the pod's http.server (through the
+RunPod proxy), pulls evidence, and ALWAYS terminates the pods it created — and
+only those (the account may have unrelated pods running).
 
 Usage:
     set RUNPOD_API_KEY=...           (PowerShell: $env:RUNPOD_API_KEY="...")
     python runpod-validation/orchestrate.py preflight
-    python runpod-validation/orchestrate.py run --role a
-    python runpod-validation/orchestrate.py run --role b
+    python runpod-validation/orchestrate.py run
     python runpod-validation/orchestrate.py terminate --pod-id XXXX
 
 Spend guard: estimates OUR spend as costPerHr x uptime per pod we created
@@ -42,18 +41,15 @@ REPO_URL = "https://github.com/halli75/motion-mirror.git"
 IMAGE = "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
 
 SPEND_CAP_USD = 4.50
+# VACE-only lineup (v0.3): a single 24 GB-class pod validates wan-1.3b-vace
+# (vace + sam2-vace smokes). The 48 GB role was retired with the deleted
+# backends.
 ROLES = {
-    "a": {
+    "vace": {
         "gpus": ["NVIDIA GeForce RTX 3090", "NVIDIA GeForce RTX 4090"],
         "disk_gb": 140,
         "min_ram_gb": 48,
         "wall_cap_h": 3.5,
-    },
-    "b": {
-        "gpus": ["NVIDIA A40", "NVIDIA RTX A6000"],
-        "disk_gb": 70,
-        "min_ram_gb": 60,
-        "wall_cap_h": 2.0,
     },
 }
 
@@ -197,13 +193,10 @@ def _pick_gpu(role_cfg: dict) -> tuple[str, float]:
 def launch(role: str) -> str:
     cfg = ROLES[role]
     gpu, bid = _pick_gpu(cfg)
-    # MM_TIER_A=1 in the orchestrator's env → lean re-validation (vace, gguf,
-    # fast only). Passed through to the pod's bootstrap.
-    tier_a = os.environ.get("MM_TIER_A", "0")
     docker_args = (
         "bash -lc 'cd /workspace && "
         f"git clone --depth 1 -b {BRANCH} {REPO_URL} repo && "
-        f"MM_ROLE={role} MM_TIER_A={tier_a} bash repo/runpod-validation/pod_bootstrap.sh'"
+        "bash repo/runpod-validation/pod_bootstrap.sh'"
     )
     # Inline literal mutation (verified working pattern); json.dumps handles
     # GraphQL string escaping for the dockerArgs value.
@@ -282,9 +275,7 @@ def fetch_evidence(pod_id: str, role: str) -> None:
         print("no manifest; best-effort fetch of known paths")
         paths += [
             "evidence/env.json", "evidence/nvidia-smi.txt", "evidence/pip-freeze.txt",
-            "evidence/smoke/vace.json", "evidence/smoke/gguf.json",
-            "evidence/smoke/fast.json", "evidence/smoke/sam2-vace.json",
-            "evidence/smoke/full.json",
+            "evidence/smoke/vace.json", "evidence/smoke/sam2-vace.json",
         ]
     got = 0
     for path in dict.fromkeys(paths):  # dedupe, keep order
@@ -431,9 +422,9 @@ def main() -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("preflight")
     p_run = sub.add_parser("run")
-    p_run.add_argument("--role", choices=("a", "b"), required=True)
+    p_run.add_argument("--role", choices=("vace",), default="vace")
     p_att = sub.add_parser("attach")
-    p_att.add_argument("--role", choices=("a", "b"), required=True)
+    p_att.add_argument("--role", choices=("vace",), default="vace")
     p_att.add_argument("--pod-id", required=True)
     p_term = sub.add_parser("terminate")
     p_term.add_argument("--pod-id", required=True)

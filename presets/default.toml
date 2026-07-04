@@ -1,7 +1,7 @@
 [preset]
 name = "default"
 description = "Standard quality — 832x480, 81 frames, density 512"
-backend = "wan-move-14b"
+backend = "wan-1.3b-vace"
 resolution = "832x480"
 num_frames = 81
 trajectory_density = 512

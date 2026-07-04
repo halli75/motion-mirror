@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "motion-mirror"
-version = "0.2b0"
+version = "0.3.0a0"
 description = "Local-first motion transfer pipeline for animating a character image from a reference video."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -36,8 +36,6 @@ cpu = [
   "onnxruntime>=1.18",
   "rtmlib>=0.0.13",
 ]
-# v0.2a additions
-# Note: lightx2v must be installed from GitHub: pip install git+https://github.com/ModelTC/LightX2V.git
 # Note: sam2 must be installed from GitHub: pip install git+https://github.com/facebookresearch/sam2.git
 # RAFT weights are auto-downloaded by torchvision — no extra package needed.
 gpu-inference = [
@@ -45,21 +43,6 @@ gpu-inference = [
   "transformers",
   "accelerate",
   "ftfy",
-  "Pillow",
-]
-gguf = [
-  "diffusers[gguf]>=0.38",
-  "transformers",
-  "accelerate",
-  "Pillow",
-]
-lightx2v = [
-  "lightx2v @ git+https://github.com/ModelTC/LightX2V.git",
-  "pyzmq>=26",
-]
-concat-id = [
-  "torch>=2.2",
-  "diffsynth",
   "Pillow",
 ]
 

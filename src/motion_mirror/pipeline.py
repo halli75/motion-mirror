@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-import warnings
 
-from .config import MotionMirrorConfig
+from typing import get_args
+
+from .config import BackendName, MotionMirrorConfig
 from .extract.pose import extract_pose
 from .extract.reference_mask import (
     propagate_reference_masks,
@@ -14,10 +14,8 @@ from .extract.reference_mask import (
 from .extract.render_skeleton import render_skeleton_conditioning_artifacts
 from .extract.segment import segment_subject
 from .extract.trajectory import synthesize_trajectory
-from .generate.concat_id import generate_with_concat_id
-from .generate.controlnet import generate_with_controlnet
 from .generate.models import GenerationRequest
-from .generate.wan_move import generate_with_wan_move
+from .generate.vace import generate_with_vace
 from .hardware import auto_config
 from .postprocess.audio import passthrough_audio
 from .types import PoseSequence, TrajectoryMap
@@ -58,22 +56,8 @@ class MotionMirrorPipeline:
         if cfg.backend == "auto":
             cfg = auto_config(cfg)
 
-        if cfg.backend == "controlnet":
-            warnings.warn(
-                "backend='controlnet' is deprecated - use 'wan-1.3b-vace' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            cfg = dataclasses.replace(cfg, backend="wan-1.3b-vace")
-
-        valid_backends = {
-            "wan-move-14b",
-            "wan-move-fast",
-            "wan-move-gguf",
-            "wan-1.3b-vace",
-            "wan-1.3b-concat-id",
-            "mock",
-        }
+        # "auto" is resolved by auto_config above; every other BackendName is runnable.
+        valid_backends = set(get_args(BackendName)) - {"auto"}
         if cfg.backend not in valid_backends:
             raise ValueError(
                 f"Unknown backend {cfg.backend!r}. "
@@ -138,19 +122,13 @@ class MotionMirrorPipeline:
             output_path=cfg.output_dir / "generated.mp4",
             conditioning_video_path=conditioning_video_path,
             conditioning_mask_path=conditioning_mask_path,
-            identity_image_path=image_path,
             backend=cfg.backend,
             resolution=cfg.resolution,
             frames=cfg.num_frames,
             device=cfg.device,
         )
 
-        if cfg.backend in ("wan-move-14b", "wan-move-fast", "wan-move-gguf", "mock"):
-            gen = generate_with_wan_move(gen_request, cfg)
-        elif cfg.backend == "wan-1.3b-concat-id":
-            gen = generate_with_concat_id(gen_request, cfg)
-        else:
-            gen = generate_with_controlnet(gen_request, cfg)
+        gen = generate_with_vace(gen_request, cfg)
 
         final_path = passthrough_audio(
             source_video_path=motion_video_path,

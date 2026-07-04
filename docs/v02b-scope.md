@@ -1,42 +1,22 @@
-# v0.2b Scope: Identity And Ecosystem
+# ComfyUI Node Pack Scope
 
-v0.2b should start only after the v0.2a hardware validation gate is either
-passed or the README/hardware policy has been corrected to match measured
-results.
+Motion Mirror ships a ComfyUI node pack so the VACE pipeline can be used inside
+ComfyUI graphs while respecting ComfyUI's own model management.
+
+> Note: the earlier Concat-ID 1.3B identity backend explored in this document has
+> been dropped. Motion Mirror's backend lineup is VACE-only — `wan-1.3b-vace` is
+> the model. Reference-image identity adherence is loose at 1.3B scale and is a
+> known limitation, not a separate backend. See the README's Known Limitations.
 
 ## Goals
 
-- Add identity preservation for the 1.3B path.
-- Add a ComfyUI node pack that respects ComfyUI model management.
-- Keep 14B identity preservation in v0.3 research, not v0.2b.
-
-## Concat-ID Spike
-
-Concat-ID targets Wan2.1 1.3B identity conditioning. The compatibility spike
-found that the public Wan release is based on `Wan2.1-T2V-1.3B` and a
-DiffSynth-style runtime, not `WanVACEPipeline`. v0.2b therefore keeps it as the
-separate experimental backend `wan-1.3b-concat-id`.
-
-See `docs/v02b-identity-backend.md` for the decision note.
-
-Likely files:
-
-- `src/motion_mirror/config.py`
-- `src/motion_mirror/generate/concat_id.py`
-- `src/motion_mirror/generate/models.py`
-- `src/motion_mirror/pipeline.py`
-- `src/motion_mirror/cli.py`
-- `src/motion_mirror/ui/app.py`
-- `src/motion_mirror/presets/identity.toml`
-- `tests/test_concat_id.py`
-
-Non-GPU tests should cover missing dependency errors, missing weights, routing,
-and fake runtime calls. GPU validation should compare `wan-1.3b-vace` and the
-identity backend on the same inputs.
+- Provide a ComfyUI node pack that respects ComfyUI model management.
+- Expose the existing pose extraction, trajectory generation, and VACE
+  generation stages as reusable nodes.
 
 ## ComfyUI Nodes
 
-Create a top-level `comfyui_nodes/` package:
+Top-level `comfyui_nodes/` package:
 
 - `comfyui_nodes/__init__.py`
 - `comfyui_nodes/nodes.py`
@@ -49,7 +29,8 @@ Initial nodes:
 - `MotionMirrorTrajectoryGen`
 - `MotionMirrorGenerate`
 
-Do not add `MotionMirrorFaceRestore` until CodeFormer exists in v0.3.
+Do not add `MotionMirrorFaceRestore` until face restoration exists in a later
+release.
 
 `MotionMirrorGenerate` must use ComfyUI model-management hooks instead of
 direct CUDA model loading, otherwise it can bypass ComfyUI VRAM arbitration and
@@ -61,6 +42,6 @@ OOM when combined with other Wan nodes.
 - IPRO
 - CodeFormer
 - RIFE
-- Concat-ID training workflows
 - multi-identity generation
 - automated MoveBench quality gates
+</content>

@@ -6,12 +6,8 @@ They require a CUDA machine, downloaded backend weights, and real input media.
 Example:
     $env:MOTION_MIRROR_GPU_IMAGE="C:\\inputs\\character.png"
     $env:MOTION_MIRROR_GPU_MOTION="C:\\inputs\\motion.mp4"
-    $env:MOTION_MIRROR_GPU_BACKENDS="wan-1.3b-vace,wan-move-fast"
+    $env:MOTION_MIRROR_GPU_BACKENDS="wan-1.3b-vace"
     pytest -m gpu tests/test_gpu_smoke_runs.py -v
-
-For the v0.2b identity backend:
-    $env:MOTION_MIRROR_GPU_CONCAT_ID="1"
-    pytest -m gpu tests/test_gpu_smoke_runs.py::test_concat_id_identity_gpu_pipeline_smoke -v
 """
 from __future__ import annotations
 
@@ -23,8 +19,6 @@ from pathlib import Path
 
 import cv2
 import pytest
-
-from motion_mirror import MotionMirrorConfig, MotionMirrorPipeline
 
 
 def _repo_root() -> Path:
@@ -125,38 +119,3 @@ def test_v02a_gpu_smoke_runner_matrix_writes_success_report(tmp_path):
         assert result["peak_cuda_memory_gb"] is not None
         assert result["peak_cuda_memory_gb"] > 0
         _assert_readable_video(Path(result["output_path"]))
-
-
-@pytest.mark.gpu
-def test_concat_id_identity_gpu_pipeline_smoke(tmp_path):
-    """Run the experimental v0.2b Concat-ID backend end-to-end on CUDA."""
-    _require_cuda()
-    if os.environ.get("MOTION_MIRROR_GPU_CONCAT_ID") != "1":
-        pytest.skip("Set MOTION_MIRROR_GPU_CONCAT_ID=1 to run Concat-ID GPU smoke")
-    image = _env_path("MOTION_MIRROR_GPU_IMAGE")
-    motion = _env_path("MOTION_MIRROR_GPU_MOTION")
-    cache_dir = Path(
-        os.environ.get(
-            "MOTION_MIRROR_GPU_CACHE_DIR",
-            str(Path.home() / ".cache" / "motion-mirror"),
-        )
-    )
-
-    cfg = MotionMirrorConfig(
-        backend="wan-1.3b-concat-id",
-        resolution=os.environ.get("MOTION_MIRROR_GPU_RESOLUTION", "832x480"),
-        num_frames=int(os.environ.get("MOTION_MIRROR_GPU_FRAMES", "17")),
-        trajectory_density=int(os.environ.get("MOTION_MIRROR_GPU_DENSITY", "256")),
-        device="cuda",
-        offload_model=True,
-        t5_cpu=True,
-        cache_dir=cache_dir,
-        project_root=tmp_path,
-    )
-
-    result = MotionMirrorPipeline(cfg).run(image, motion)
-
-    assert result.output_path == tmp_path / "outputs" / "result.mp4"
-    _assert_readable_video(result.output_path)
-    assert result.segmentation_path is not None
-    assert result.trajectory_path is not None

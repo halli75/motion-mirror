@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -16,17 +15,13 @@ from motion_mirror.config import MotionMirrorConfig
 
 def test_config_default_backend():
     cfg = MotionMirrorConfig()
-    assert cfg.backend == "wan-move-14b"
+    assert cfg.backend == "wan-1.3b-vace"
 
 
-def test_config_new_backends():
+def test_config_backends():
     for backend in (
         "auto",
-        "wan-move-fast",
-        "wan-move-gguf",
         "wan-1.3b-vace",
-        "wan-1.3b-concat-id",
-        "controlnet",
         "mock",
     ):
         cfg = MotionMirrorConfig(backend=backend)
@@ -70,58 +65,6 @@ def test_config_new_fields_settable():
     assert cfg.reference_masker == "sam2"
 
 
-def test_pipeline_controlnet_alias_warns(tmp_path):
-    from motion_mirror.pipeline import MotionMirrorPipeline
-
-    img_path = tmp_path / "char.png"
-    img_path.write_bytes(b"fake-image")
-    vid_path = tmp_path / "motion.mp4"
-    vid_path.write_bytes(b"fake-video")
-
-    run_cfg = MotionMirrorConfig(
-        backend="controlnet",
-        resolution="64x32",
-        num_frames=2,
-        trajectory_density=16,
-        device="cpu",
-        project_root=tmp_path,
-    )
-
-    fake_seg = MagicMock()
-    fake_seg.rgba_path = tmp_path / "seg.png"
-    fake_seg.rgba_path.touch()
-    fake_pose = MagicMock()
-    fake_traj = MagicMock()
-    fake_traj.save = MagicMock()
-    fake_gen = MagicMock()
-    fake_gen.video_path = tmp_path / "gen.mp4"
-    fake_gen.video_path.touch()
-    final_path = tmp_path / "result.mp4"
-    final_path.touch()
-
-    def fake_render(**kwargs):
-        kwargs["video_path"].touch()
-        kwargs["mask_path"].touch()
-        return kwargs["video_path"], kwargs["mask_path"]
-
-    with (
-        patch("motion_mirror.pipeline.segment_subject", return_value=fake_seg),
-        patch("motion_mirror.pipeline.extract_pose", return_value=fake_pose),
-        patch("motion_mirror.pipeline.render_skeleton_conditioning_artifacts", side_effect=fake_render),
-        patch("motion_mirror.pipeline.synthesize_trajectory", return_value=fake_traj),
-        patch("motion_mirror.pipeline.generate_with_controlnet", return_value=fake_gen),
-        patch("motion_mirror.pipeline.passthrough_audio", return_value=final_path),
-    ):
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result = MotionMirrorPipeline(run_cfg).run(img_path, vid_path)
-
-    dep_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert dep_warnings
-    assert "controlnet" in str(dep_warnings[0].message).lower()
-    assert result.output_path.exists()
-
-
 def test_pipeline_vace_backend_threads_conditioning_artifacts(tmp_path):
     from motion_mirror.pipeline import MotionMirrorPipeline
 
@@ -161,7 +104,7 @@ def test_pipeline_vace_backend_threads_conditioning_artifacts(tmp_path):
         patch("motion_mirror.pipeline.extract_pose", return_value=fake_pose),
         patch("motion_mirror.pipeline.synthesize_trajectory", return_value=fake_traj),
         patch("motion_mirror.pipeline.render_skeleton_conditioning_artifacts", side_effect=fake_render),
-        patch("motion_mirror.pipeline.generate_with_controlnet", return_value=fake_gen) as gen_mock,
+        patch("motion_mirror.pipeline.generate_with_vace", return_value=fake_gen) as gen_mock,
         patch("motion_mirror.pipeline.passthrough_audio", return_value=final_path),
     ):
         result = MotionMirrorPipeline(cfg).run(img_path, vid_path)
@@ -173,99 +116,6 @@ def test_pipeline_vace_backend_threads_conditioning_artifacts(tmp_path):
     assert result.conditioning_mask_path == req.conditioning_mask_path
     assert result.conditioning_video_path.exists()
     assert result.conditioning_mask_path.exists()
-
-
-def test_pipeline_gguf_backend_routes_to_wan_generator(tmp_path):
-    from motion_mirror.pipeline import MotionMirrorPipeline
-
-    img_path = tmp_path / "char.png"
-    img_path.write_bytes(b"fake-image")
-    vid_path = tmp_path / "motion.mp4"
-    vid_path.write_bytes(b"fake-video")
-
-    cfg = MotionMirrorConfig(
-        backend="wan-move-gguf",
-        resolution="64x32",
-        num_frames=4,
-        trajectory_density=16,
-        device="cpu",
-        project_root=tmp_path,
-    )
-
-    fake_seg = MagicMock()
-    fake_seg.rgba_path = tmp_path / "segmented.png"
-    fake_seg.rgba_path.touch()
-    fake_pose = MagicMock()
-    fake_traj = MagicMock()
-    fake_traj.save = MagicMock()
-    fake_gen = MagicMock()
-    fake_gen.video_path = tmp_path / "generated.mp4"
-    fake_gen.video_path.touch()
-    final_path = tmp_path / "result.mp4"
-    final_path.touch()
-
-    with (
-        patch("motion_mirror.pipeline.segment_subject", return_value=fake_seg),
-        patch("motion_mirror.pipeline.extract_pose", return_value=fake_pose),
-        patch("motion_mirror.pipeline.synthesize_trajectory", return_value=fake_traj),
-        patch("motion_mirror.pipeline.generate_with_wan_move", return_value=fake_gen) as gen_mock,
-        patch("motion_mirror.pipeline.generate_with_controlnet") as controlnet_mock,
-        patch("motion_mirror.pipeline.passthrough_audio", return_value=final_path),
-    ):
-        result = MotionMirrorPipeline(cfg).run(img_path, vid_path)
-
-    req = gen_mock.call_args.args[0]
-    assert req.backend == "wan-move-gguf"
-    assert result.output_path == final_path
-    controlnet_mock.assert_not_called()
-
-
-def test_pipeline_concat_id_backend_routes_to_identity_generator(tmp_path):
-    from motion_mirror.pipeline import MotionMirrorPipeline
-
-    img_path = tmp_path / "char.png"
-    img_path.write_bytes(b"fake-image")
-    vid_path = tmp_path / "motion.mp4"
-    vid_path.write_bytes(b"fake-video")
-
-    cfg = MotionMirrorConfig(
-        backend="wan-1.3b-concat-id",
-        resolution="64x32",
-        num_frames=4,
-        trajectory_density=16,
-        device="cpu",
-        project_root=tmp_path,
-    )
-
-    fake_seg = MagicMock()
-    fake_seg.rgba_path = tmp_path / "segmented.png"
-    fake_seg.rgba_path.touch()
-    fake_pose = MagicMock()
-    fake_traj = MagicMock()
-    fake_traj.save = MagicMock()
-    fake_gen = MagicMock()
-    fake_gen.video_path = tmp_path / "generated.mp4"
-    fake_gen.video_path.touch()
-    final_path = tmp_path / "result.mp4"
-    final_path.touch()
-
-    with (
-        patch("motion_mirror.pipeline.segment_subject", return_value=fake_seg),
-        patch("motion_mirror.pipeline.extract_pose", return_value=fake_pose),
-        patch("motion_mirror.pipeline.synthesize_trajectory", return_value=fake_traj),
-        patch("motion_mirror.pipeline.generate_with_concat_id", return_value=fake_gen) as gen_mock,
-        patch("motion_mirror.pipeline.generate_with_wan_move") as wan_mock,
-        patch("motion_mirror.pipeline.generate_with_controlnet") as controlnet_mock,
-        patch("motion_mirror.pipeline.passthrough_audio", return_value=final_path),
-    ):
-        result = MotionMirrorPipeline(cfg).run(img_path, vid_path)
-
-    req = gen_mock.call_args.args[0]
-    assert req.backend == "wan-1.3b-concat-id"
-    assert req.identity_image_path == img_path
-    assert result.output_path == final_path
-    wan_mock.assert_not_called()
-    controlnet_mock.assert_not_called()
 
 
 def test_pipeline_reference_masker_sam2_threads_reference_masks(tmp_path):
@@ -305,7 +155,7 @@ def test_pipeline_reference_masker_sam2_threads_reference_masks(tmp_path):
         patch("motion_mirror.pipeline.extract_pose", return_value=fake_pose),
         patch("motion_mirror.pipeline.propagate_reference_masks", return_value=fake_ref) as ref_mock,
         patch("motion_mirror.pipeline.synthesize_trajectory", return_value=fake_traj) as traj_mock,
-        patch("motion_mirror.pipeline.generate_with_wan_move", return_value=fake_gen),
+        patch("motion_mirror.pipeline.generate_with_vace", return_value=fake_gen),
         patch("motion_mirror.pipeline.passthrough_audio", return_value=final_path),
     ):
         result = MotionMirrorPipeline(cfg).run(img_path, vid_path)
@@ -363,7 +213,7 @@ def test_pipeline_vace_sam2_reference_mask_overrides_pose_mask(tmp_path):
         patch("motion_mirror.pipeline.synthesize_trajectory", return_value=fake_traj),
         patch("motion_mirror.pipeline.render_skeleton_conditioning_artifacts", side_effect=fake_render),
         patch("motion_mirror.pipeline.write_vace_reference_mask_video", side_effect=fake_write_vace) as mask_mock,
-        patch("motion_mirror.pipeline.generate_with_controlnet", return_value=fake_gen) as gen_mock,
+        patch("motion_mirror.pipeline.generate_with_vace", return_value=fake_gen) as gen_mock,
         patch("motion_mirror.pipeline.passthrough_audio", return_value=final_path),
     ):
         MotionMirrorPipeline(cfg).run(img_path, vid_path)
@@ -383,13 +233,13 @@ def test_pipeline_unknown_backend_raises(tmp_path):
     vid = tmp_path / "x.mp4"
     vid.write_bytes(b"fake")
 
-    cfg = MotionMirrorConfig(backend="wan-move-14b")
+    cfg = MotionMirrorConfig(backend="wan-1.3b-vace")
     object.__setattr__(cfg, "backend", "nonexistent-backend")
     with pytest.raises(ValueError, match="nonexistent-backend"):
         MotionMirrorPipeline(cfg).run(img, vid)
 
 
-def test_pipeline_new_backends_in_valid_set(tmp_path):
+def test_pipeline_vace_backend_in_valid_set(tmp_path):
     from motion_mirror.pipeline import MotionMirrorPipeline
 
     img_path = tmp_path / "char.png"
@@ -402,21 +252,22 @@ def test_pipeline_new_backends_in_valid_set(tmp_path):
         writer.write(rng.integers(0, 200, (64, 64, 3), dtype=np.uint8))
     writer.release()
 
-    for backend in ("wan-move-fast", "wan-move-gguf", "wan-1.3b-vace", "wan-1.3b-concat-id"):
-        cfg = MotionMirrorConfig(
-            backend=backend,
-            resolution="64x32",
-            num_frames=2,
-            trajectory_density=16,
-            device="cpu",
-            project_root=tmp_path,
-        )
-        with pytest.raises(Exception) as exc_info:
-            MotionMirrorPipeline(cfg).run(img_path, vid_path)
-        assert "unknown" not in str(exc_info.value).lower() or exc_info.type is not ValueError
+    cfg = MotionMirrorConfig(
+        backend="wan-1.3b-vace",
+        resolution="64x32",
+        num_frames=5,
+        trajectory_density=16,
+        device="cpu",
+        project_root=tmp_path,
+    )
+    # A real backend without weights fails downstream, but never with an
+    # "unknown backend" ValueError from the dispatch guard.
+    with pytest.raises(Exception) as exc_info:
+        MotionMirrorPipeline(cfg).run(img_path, vid_path)
+    assert "unknown" not in str(exc_info.value).lower() or exc_info.type is not ValueError
 
 
-def test_cli_presets_list_shows_new_presets():
+def test_cli_presets_list_shows_presets():
     from motion_mirror.cli import app
     from typer.testing import CliRunner
 
@@ -424,59 +275,29 @@ def test_cli_presets_list_shows_new_presets():
     result = runner.invoke(app, ["presets", "--list"])
     assert result.exit_code == 0
     out = result.output.encode("ascii", errors="replace").decode()
+    assert "default" in out
     assert "low-vram" in out
-    assert "fast" in out
-    assert "gguf" in out
-    assert "identity" in out
+    assert "mock" in out
 
 
-def test_cli_download_help_shows_new_groups():
+def test_cli_download_help_shows_groups():
     from motion_mirror.cli import app
     from typer.testing import CliRunner
 
     runner = CliRunner()
     result = runner.invoke(app, ["download", "--help"])
     assert result.exit_code == 0
-    assert "light" in result.output or "wan-1.3b" in result.output
-    assert "gguf" in result.output or "wan-move-gguf" in result.output
-    assert "identity" in result.output or "concat-id" in result.output
+    assert "vace" in result.output or "wan-1.3b" in result.output
+    assert "dwpose" in result.output
 
 
-def test_cli_fast_download_spec_uses_lightx2v_assets():
-    from motion_mirror.cli import _MODEL_SPECS
-
-    spec = _MODEL_SPECS["wan-move-fast"]
-    assert spec["cache_subdir"] == "wan-move-fast"
-    assert "wan_i2v_distill_4step_cfg_4090.json" in spec["required_paths"]
-    assert "sources" in spec
-    repo_ids = {source["repo_id"] for source in spec["sources"]}
-    assert "lightx2v/Wan2.1-Distill-Models" in repo_ids
-    assert "Wan-AI/Wan2.1-I2V-14B-720P" in repo_ids
-
-
-def test_cli_gguf_download_spec_uses_single_transformer_asset():
+def test_cli_vace_download_spec():
     from motion_mirror.cli import _MODEL_GROUPS, _MODEL_SPECS
 
-    assert _MODEL_GROUPS["gguf"] == ["wan-move-gguf"]
-    spec = _MODEL_SPECS["wan-move-gguf"]
-    assert spec["repo_id"] == "city96/Wan2.1-I2V-14B-480P-gguf"
-    assert spec["filename"] == "wan2.1-i2v-14b-480p-Q4_K_M.gguf"
-    assert spec["cache_subdir"] == "wan-move-gguf"
-    assert spec["required_paths"] == ["wan2.1-i2v-14b-480p-Q4_K_M.gguf"]
-
-
-def test_cli_concat_id_download_spec_uses_t2v_and_adapter_assets():
-    from motion_mirror.cli import _MODEL_GROUPS, _MODEL_SPECS
-
-    assert _MODEL_GROUPS["identity"] == ["wan-1.3b-concat-id"]
-    assert _MODEL_GROUPS["concat-id"] == ["wan-1.3b-concat-id"]
-    spec = _MODEL_SPECS["wan-1.3b-concat-id"]
-    assert spec["cache_subdir"] == "wan-1.3b-concat-id"
-    assert "second_stage_adaln.pt" in spec["required_paths"]
-    assert "antelopev2" in spec["required_paths"]
-    repo_ids = {source["repo_id"] for source in spec["sources"]}
-    assert "Wan-AI/Wan2.1-T2V-1.3B" in repo_ids
-    assert "yongzhong/Concat-ID-Wan" in repo_ids
+    assert _MODEL_GROUPS["vace"] == ["wan-1.3b-vace"]
+    spec = _MODEL_SPECS["wan-1.3b-vace"]
+    assert spec["repo_id"] == "Wan-AI/Wan2.1-VACE-1.3B-diffusers"
+    assert spec["cache_subdir"] == "wan-1.3b-vace"
 
 
 def test_cli_run_help_shows_new_flags():
@@ -493,5 +314,4 @@ def test_cli_run_help_shows_new_flags():
     assert "--segmenter" in out
     assert "--reference-masker" in out
     assert "--auto" in out
-    assert "wan-1.3b-concat-id" in out
-    assert "wan-move-gguf" in out
+    assert "wan-1.3b-vace" in out

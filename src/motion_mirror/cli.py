@@ -46,11 +46,6 @@ def _is_spec_cached(dest_dir: Path, spec: dict) -> bool:
     if not dest_dir.exists():
         return False
 
-    required_paths = spec.get("required_paths")
-    if required_paths:
-        if not all(_cache_path_complete(dest_dir / rel_path) for rel_path in required_paths):
-            return False
-
     filename = spec.get("filename")
     if filename is not None and not _cache_path_complete(dest_dir / filename):
         return False
@@ -59,7 +54,7 @@ def _is_spec_cached(dest_dir: Path, spec: dict) -> bool:
     if min_cached_bytes is not None:
         return _cache_size_bytes(dest_dir) >= int(min_cached_bytes)
 
-    if required_paths or filename is not None:
+    if filename is not None:
         return True
     return any(dest_dir.iterdir())
 
@@ -100,107 +95,13 @@ _MODEL_SPECS: dict[str, dict] = {
         "cache_subdir": "dwpose",
         "label": "DWPose YOLOX detector",
     },
-    "wan-move": {
-        "repo_id": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",
-        "filename": None,
-        # Full diffusers snapshot ~42 GB: transformer ~28 GB + UMT5-XXL text
-        # encoder ~11 GB + CLIP vision (~2 GB) + VAE (~0.5 GB) + configs.
-        "expected_bytes": 42_000_000_000,
-        # Above the transformer-only size (~28 GB) so a partial snapshot missing
-        # the UMT5-XXL text encoder does NOT get treated as a complete cache.
-        "min_cached_bytes": 35_000_000_000,
-        "cache_subdir": "wan-move",
-        "label": "Wan2.1-I2V-14B-720P (diffusers format, ~42 GB) [backend: wan-move-14b]",
-    },
-    "wan-move-gguf": {
-        "repo_id": "city96/Wan2.1-I2V-14B-480P-gguf",
-        "filename": "wan2.1-i2v-14b-480p-Q4_K_M.gguf",
-        "expected_bytes": 12_000_000_000,
-        "min_cached_bytes": 6_000_000_000,
-        "cache_subdir": "wan-move-gguf",
-        "label": "Wan2.1-I2V-14B-480P GGUF Q4_K_M transformer (~12 GB) [backend: wan-move-gguf]",
-        "required_paths": ["wan2.1-i2v-14b-480p-Q4_K_M.gguf"],
-    },
     "wan-1.3b-vace": {
         "repo_id": "Wan-AI/Wan2.1-VACE-1.3B-diffusers",
         "filename": None,
         "expected_bytes": 5_000_000_000,
         "min_cached_bytes": 3_000_000_000,
         "cache_subdir": "wan-1.3b-vace",
-        "label": "Wan2.1-VACE-1.3B (lightweight, ~5 GB, needs ~8 GB VRAM) [backend: wan-1.3b-vace]",
-    },
-    "wan-1.3b-concat-id": {
-        "expected_bytes": 9_000_000_000,
-        "min_cached_bytes": 3_000_000_000,
-        "cache_subdir": "wan-1.3b-concat-id",
-        "label": "Concat-ID Wan2.1-T2V-1.3B identity backend (experimental) [backend: wan-1.3b-concat-id]",
-        "required_paths": [
-            "diffusion_pytorch_model.safetensors",
-            "models_t5_umt5-xxl-enc-bf16.pth",
-            "Wan2.1_VAE.pth",
-            "google",
-            "second_stage_adaln.pt",
-            "antelopev2",
-        ],
-        "sources": [
-            {
-                "repo_id": "Wan-AI/Wan2.1-T2V-1.3B",
-                "filename": None,
-                "allow_patterns": [
-                    "diffusion_pytorch_model*.safetensors",
-                    "models_t5_umt5-xxl-enc-bf16.pth",
-                    "Wan2.1_VAE.pth",
-                    "google/**",
-                ],
-            },
-            {
-                "repo_id": "yongzhong/Concat-ID-Wan",
-                "filename": None,
-                "allow_patterns": [
-                    "first_stage.pt",
-                    "second_stage_adaln.pt",
-                    "antelopev2/**",
-                ],
-            },
-        ],
-    },
-    "wan-move-fast": {
-        "expected_bytes": 45_000_000_000,
-        "min_cached_bytes": 20_000_000_000,
-        "cache_subdir": "wan-move-fast",
-        "label": "LightX2V Wan2.1 I2V 4-step fast backend (~45 GB with companion Wan assets) [backend: wan-move-fast]",
-        "required_paths": [
-            "wan_i2v_distill_4step_cfg_4090.json",
-            "wan2.1_i2v_720p_scaled_fp8_e4m3_lightx2v_4step.safetensors",
-            "config.json",
-            "models_t5_umt5-xxl-enc-bf16.pth",
-            "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
-            "Wan2.1_VAE.pth",
-            "google",
-            "xlm-roberta-large",
-        ],
-        "sources": [
-            {
-                "repo_id": "lightx2v/Wan2.1-Distill-Models",
-                "filename": "wan2.1_i2v_720p_scaled_fp8_e4m3_lightx2v_4step.safetensors",
-            },
-            {
-                "repo_id": "lightx2v/Wan2.1-Distill-Models",
-                "filename": "config.json",
-            },
-            {
-                "repo_id": "Wan-AI/Wan2.1-I2V-14B-720P",
-                "filename": None,
-                "allow_patterns": [
-                    "models_t5_umt5-xxl-enc-bf16.pth",
-                    "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
-                    "Wan2.1_VAE.pth",
-                    "google/**",
-                    "xlm-roberta-large/**",
-                    "configuration.json",
-                ],
-            },
-        ],
+        "label": "Wan2.1-VACE-1.3B (lightweight, ~5 GB, needs ~9 GB VRAM) [backend: wan-1.3b-vace]",
     },
     "sam2": {
         "repo_id": "facebook/sam2-hiera-large",
@@ -214,21 +115,12 @@ _MODEL_SPECS: dict[str, dict] = {
 
 _MODEL_GROUPS = {
     "dwpose": ["dwpose-pose", "dwpose-det"],
-    "wan-move": ["wan-move"],
-    "gguf": ["wan-move-gguf"],
-    "light": ["wan-1.3b-vace"],
-    "fast": ["wan-move-fast"],
-    "identity": ["wan-1.3b-concat-id"],
-    "concat-id": ["wan-1.3b-concat-id"],
+    "vace": ["wan-1.3b-vace"],
     "extras": ["sam2"],
     "all": [
         "dwpose-pose",
         "dwpose-det",
-        "wan-move",
-        "wan-move-gguf",
         "wan-1.3b-vace",
-        "wan-1.3b-concat-id",
-        "wan-move-fast",
         "sam2",
     ],
 }
@@ -238,7 +130,7 @@ _MODEL_GROUPS = {
 def run(
     image: Path = typer.Argument(..., help="Character image path (PNG/JPG/WEBP)."),
     motion: Path = typer.Argument(..., help="Reference motion video path (MP4/MOV/AVI/MKV)."),
-    backend: Optional[str] = typer.Option(None, help="Backend: wan-move-14b | wan-move-fast | wan-move-gguf | wan-1.3b-vace | wan-1.3b-concat-id | mock | auto."),
+    backend: Optional[str] = typer.Option(None, help="Backend: auto | wan-1.3b-vace | mock."),
     resolution: Optional[str] = typer.Option(None, help="Output resolution WxH, e.g. 832x480."),
     frames: Optional[int] = typer.Option(None, help="Number of output frames."),
     density: Optional[int] = typer.Option(None, help="Trajectory density (512 = default, 1024 = HQ)."),
@@ -256,7 +148,7 @@ def run(
     cfg_kwargs: dict = {}
     if preset:
         preset_data = _load_preset(preset)
-        cfg_kwargs["backend"] = preset_data.get("backend", "wan-move-14b")
+        cfg_kwargs["backend"] = preset_data.get("backend", "wan-1.3b-vace")
         cfg_kwargs["resolution"] = preset_data.get("resolution", "832x480")
         cfg_kwargs["num_frames"] = preset_data.get("num_frames", 81)
         cfg_kwargs["trajectory_density"] = preset_data.get("trajectory_density", 512)
@@ -323,9 +215,8 @@ def download(
     model: str = typer.Option(
         "all",
         help=(
-            "Model(s) to download: all | dwpose | wan-move | gguf | light | fast | identity | "
-            "concat-id | extras | wan-move-gguf | wan-1.3b-vace | wan-1.3b-concat-id | "
-            "wan-move-fast | sam2 | dwpose-pose | dwpose-det."
+            "Model(s) to download: all | dwpose | vace | extras | "
+            "wan-1.3b-vace | sam2 | dwpose-pose | dwpose-det."
         ),
     ),
     cache_dir: Optional[Path] = typer.Option(None, help="Override default cache directory."),
@@ -367,37 +258,8 @@ def download(
     for key in keys:
         spec = _MODEL_SPECS[key]
         dest_dir = cfg.model_cache(spec["cache_subdir"])
-        if key == "wan-move-fast":
-            _materialize_fast_runtime_configs(dest_dir)
         label = spec["label"]
         already_cached = _is_spec_cached(dest_dir, spec)
-
-        if spec.get("sources"):
-            if already_cached:
-                console.print(f"[dim]{label}[/dim] - [green]already cached[/green] ({dest_dir})")
-                continue
-            console.print(f"Downloading [cyan]{label}[/cyan] - this may take a while ...")
-            try:
-                for source in spec["sources"]:
-                    if source.get("filename") is not None:
-                        hf_hub_download(
-                            repo_id=source["repo_id"],
-                            filename=source["filename"],
-                            local_dir=str(dest_dir),
-                        )
-                    else:
-                        snapshot_kwargs = {
-                            "repo_id": source["repo_id"],
-                            "local_dir": str(dest_dir),
-                        }
-                        if source.get("allow_patterns") is not None:
-                            snapshot_kwargs["allow_patterns"] = source["allow_patterns"]
-                        snapshot_download(**snapshot_kwargs)
-                console.print(f"  [green]ok[/green] Saved to {dest_dir}")
-            except Exception as exc:
-                console.print(f"  [red]Failed:[/red] {exc}")
-                raise typer.Exit(code=1)
-            continue
 
         if spec["filename"] is not None:
             dest_file = dest_dir / spec["filename"]
@@ -431,12 +293,6 @@ def download(
                 raise typer.Exit(code=1)
 
     console.print("[green]Download complete.[/green]")
-
-
-def _materialize_fast_runtime_configs(dest_dir: Path) -> None:
-    from .generate.wan_move import ensure_lightx2v_fast_configs
-
-    ensure_lightx2v_fast_configs(dest_dir)
 
 
 @app.command()

@@ -10,7 +10,7 @@ libraries, and model caches on drives without enough free space.
 - Python 3.11
 - Recent NVIDIA driver compatible with CUDA 12.x
 - Microsoft Visual C++ Redistributable 2015-2022
-- 50-80 GB free disk space for model weights
+- 30-50 GB free disk space for model weights and working files
 
 ## Setup
 
@@ -26,16 +26,9 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install -e ".[cuda,gpu-inference]"
 ```
 
-Optional v0.2a runtimes:
+Optional SAM-2 segmenter / reference-video masker:
 
 ```powershell
-# LightX2V fast backend
-pip install -e ".[lightx2v]"
-
-# Experimental GGUF backend
-pip install -e ".[gguf]"
-
-# SAM-2 segmenter and reference-video masker
 pip install git+https://github.com/facebookresearch/sam2.git
 ```
 
@@ -55,10 +48,12 @@ Fix the CUDA/PyTorch/driver mismatch before downloading large models.
 
 ## Model Cache
 
-Downloads go to `~/.cache/motion-mirror` by default. To use another drive:
+Downloads go to `~/.cache/motion-mirror` by default, and `motion-mirror run`
+reads from that location. If the system drive is short on space, move the
+cache to another drive and junction it back:
 
 ```powershell
-$env:MOTION_MIRROR_MODEL_DIR = "D:\motion-mirror-models"
+New-Item -ItemType Junction -Path "$env:USERPROFILE\.cache\motion-mirror" -Target "D:\motion-mirror-models"
 motion-mirror download --model dwpose
 ```
 
@@ -73,16 +68,19 @@ CPU-only mock smoke:
 motion-mirror run character.png motion.mp4 --backend mock --frames 3 --resolution 64x32
 ```
 
-CUDA backend smoke after weights are downloaded:
+CUDA VACE backend smoke after weights are downloaded:
 
 ```powershell
-$env:PYTHONPATH = "C:\Users\arnav\motion-mirror\src"
-python scripts\v02a_gpu_smoke.py `
-  --image character.png `
-  --motion motion.mp4 `
+motion-mirror run character.png motion.mp4 `
   --backend wan-1.3b-vace `
-  --report outputs\v02a-smoke\vace.json
+  --offload-model `
+  --t5-cpu `
+  --frames 17 `
+  --resolution 832x480 `
+  --output-dir outputs\vace-smoke
 ```
+
+Add `--segmenter sam2 --reference-masker sam2` to exercise the SAM-2 path.
 
 ## Troubleshooting
 
@@ -90,6 +88,7 @@ python scripts\v02a_gpu_smoke.py `
   the NVIDIA driver.
 - `ImportError` for optional backends: install the matching optional extra listed
   above.
-- Disk-space errors: set `MOTION_MIRROR_MODEL_DIR` to a drive with enough space.
+- Disk-space errors: junction the model cache to a drive with enough space
+  (see Model Cache above).
 - Long Gradio jobs behind a proxy may disconnect. Use the CLI for the most
   reliable long generation path.

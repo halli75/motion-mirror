@@ -9,7 +9,7 @@ from motion_mirror.config import MotionMirrorConfig
 def test_defaults():
     c = MotionMirrorConfig()
     assert c.trajectory_density == 512
-    assert c.backend == "wan-move-14b"
+    assert c.backend == "wan-1.3b-vace"
     assert c.resolution == "832x480"
     assert c.num_frames == 81
     assert c.device == "cuda"
@@ -46,8 +46,8 @@ def test_model_cache_creates_dir():
 def test_model_cache_idempotent():
     with tempfile.TemporaryDirectory() as tmp:
         c = MotionMirrorConfig(cache_dir=Path(tmp))
-        p1 = c.model_cache("wan-move")
-        p2 = c.model_cache("wan-move")
+        p1 = c.model_cache("wan-1.3b-vace")
+        p2 = c.model_cache("wan-1.3b-vace")
         assert p1 == p2
         assert p1.exists()
 
@@ -86,12 +86,7 @@ def test_invalid_flow_estimator_raises():
 def test_all_valid_backends_construct():
     for backend in (
         "auto",
-        "wan-move-14b",
-        "wan-move-fast",
-        "wan-move-gguf",
         "wan-1.3b-vace",
-        "wan-1.3b-concat-id",
-        "controlnet",
         "mock",
     ):
         assert MotionMirrorConfig(backend=backend).backend == backend

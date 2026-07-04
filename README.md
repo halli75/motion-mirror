@@ -4,7 +4,7 @@
 
 Motion Mirror is the open-source alternative to Kling AI's Motion Control. Give it a character image and a reference video; it produces an animated video of your character performing the same motion. Everything runs on your machine — no cloud, no API keys, no per-clip fees.
 
-> **Early release** — v0.2a expands Motion Mirror toward consumer hardware with low-VRAM, fast, and experimental GGUF backends. See [Known Limitations](#known-limitations) before installing.
+> **Early release** — v0.3 ships a focused, GPU-validated backend lineup built around the Wan2.1-VACE 1.3B model. See [Known Limitations](#known-limitations) before installing.
 
 ---
 
@@ -17,17 +17,13 @@ character.png + motion_video.mp4
  [1] Segment character     rembg or SAM-2 removes background -> RGBA mask
         │
         ▼
- [2] Extract pose          DWPose-L detects 133 skeleton keypoints per frame
+ [2] Extract pose          DWPose-L detects skeleton keypoints per frame
         │
         ▼
- [3] Synthesize trajectory 3-layer dense point tracks:
-                           Layer 1 — skeleton anchors
-                           Layer 2 — Gaussian-falloff interpolation
-                           Layer 3 — optical flow (Farneback or RAFT)
+ [3] Build conditioning    Skeleton + mask conditioning frames for VACE
         │
         ▼
- [4] Generate video        wan-1.3b-vace, Wan I2V accessibility
-                           experiments, or mock
+ [4] Generate video        wan-1.3b-vace (Wan2.1-VACE 1.3B) or mock
         │
         ▼
  [5] Passthrough audio     Original audio muxed into output
@@ -42,15 +38,15 @@ character.png + motion_video.mp4
 
 | Component | Minimum | Recommended |
 |---|---|---|
-| GPU VRAM | 8 GB for `wan-1.3b-vace` | 24 GB+ for fast/full backends |
+| GPU VRAM | ~9 GB free for `wan-1.3b-vace` | 12 GB+ free |
 | System RAM | 32 GB | 64 GB |
-| Disk space | 50 GB free | 80 GB free |
+| Disk space | 30 GB free | 50 GB free |
 | CUDA | 12.x | 12.x |
 | Python | 3.11 | 3.11+ |
 
 CPU-only mode is not supported for real generation (mock mode works for testing).
 
-> **VRAM note:** `--auto` chooses from free CUDA VRAM: 9-12.5 GB uses `wan-1.3b-vace` with full offload (measured 8.02 GB peak), 12.5-24 GB uses experimental `wan-move-gguf` (measured 11.52 GB peak), 24-40 GB uses `wan-move-fast`, and 40 GB+ uses `wan-move-14b`. Floors are measured peak + 1 GB headroom (RTX 3090/4090 validation, 2026-07-03).
+> **VRAM note:** `wan-1.3b-vace` measured an **8.02 GB peak** on the RTX 3090/4090 validation runs (2026-07-03, 17-frame smoke, `--offload-model --t5-cpu`). Auto-selection requires **≥9.02 GB free VRAM** (measured peak + 1 GB headroom); below that floor, `--auto` cannot run real generation and you should use `--backend mock`.
 
 ---
 
@@ -62,94 +58,60 @@ CPU-only mode is not supported for real generation (mock mode works for testing)
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 ```
 
-### 2. Install Motion Mirror
+### 2. Install Motion Mirror with GPU inference dependencies
 
 ```bash
-pip install -e ".[cuda]"
+pip install -e ".[cuda,gpu-inference]"
 ```
 
 Or from PyPI once published:
 
 ```bash
-pip install motion-mirror[cuda]
+pip install "motion-mirror[cuda,gpu-inference]"
 ```
 
-### 3. Install GPU inference dependencies
+### 3. Optional: SAM-2 segmenter / reference-video masker
 
 ```bash
-pip install "diffusers>=0.33" transformers accelerate ftfy
-```
-
-Optional v0.2a runtimes:
-
-```bash
-# LightX2V fast backend
-pip install -e ".[lightx2v]"
-
-# Experimental GGUF backend
-pip install -e ".[gguf]"
-
-# SAM-2 segmenter / reference-video masker
 pip install git+https://github.com/facebookresearch/sam2.git
-
-# Experimental Concat-ID identity backend
-pip install -e ".[concat-id]"
 ```
 
 ### 4. Download model weights
 
 ```bash
-# Wan2.1-I2V-14B generation model (~28 GB, diffusers format)
-motion-mirror download --model wan-move
-
-# Experimental Wan2.1-I2V-14B GGUF transformer (~12 GB)
-motion-mirror download --model gguf
-
-# Wan2.1-VACE-1.3B low-VRAM backend
+# Wan2.1-VACE-1.3B generation model (~5 GB, diffusers format)
 motion-mirror download --model wan-1.3b-vace
 
-# Experimental Concat-ID Wan2.1-T2V-1.3B identity backend
-motion-mirror download --model concat-id
-
-# LightX2V 4-step fast backend assets
-motion-mirror download --model fast
-
-# DWPose-L pose estimation (~350 MB)
+# DWPose-L pose estimation (detector + pose, ~350 MB)
 motion-mirror download --model dwpose
 
-# SAM-2 segmenter / reference-video masker
+# SAM-2 segmenter / reference-video masker (~900 MB)
 motion-mirror download --model sam2
 ```
 
-Downloads go to `~/.cache/motion-mirror/`. A disk-space check runs before each download.
+`--model` also accepts groups: `vace`, `dwpose`, `extras`, or `all`. Downloads go
+to `~/.cache/motion-mirror/`. A disk-space check runs before each download.
 
 ---
 
 ## Quick start
 
 ```bash
-# Basic run
+# Basic run (defaults to wan-1.3b-vace with offload)
 motion-mirror run character.png motion.mp4
 
-# High quality (1280×720, density 1024)
-motion-mirror run character.png motion.mp4 --preset hq
-
-# Let Motion Mirror pick from available CUDA VRAM
-motion-mirror run character.png motion.mp4 --auto
-
-# Low-VRAM v0.2a path
+# Low-VRAM VACE path made explicit
 motion-mirror run character.png motion.mp4 \
   --backend wan-1.3b-vace \
   --offload-model \
   --t5-cpu
 
-# Experimental v0.2b identity path
-motion-mirror run character.png motion.mp4 \
-  --preset identity
+# Let Motion Mirror pick from available CUDA VRAM
+motion-mirror run character.png motion.mp4 --auto
 
-# Explicit options
+# Explicit options with SAM-2 segmentation
 motion-mirror run character.png motion.mp4 \
-  --backend wan-move-gguf \
+  --backend wan-1.3b-vace \
   --resolution 832x480 \
   --frames 81 \
   --density 512 \
@@ -180,11 +142,11 @@ Commands:
   ui         Launch the Gradio web UI
 ```
 
-### v0.2a public options
+### Public run options
 
 ```bash
 motion-mirror run character.png motion.mp4 \
-  --backend wan-move-14b|wan-move-fast|wan-move-gguf|wan-1.3b-vace|wan-1.3b-concat-id|mock|auto \
+  --backend auto|wan-1.3b-vace|mock \
   --auto \
   --offload-model \
   --t5-cpu \
@@ -193,11 +155,15 @@ motion-mirror run character.png motion.mp4 \
   --reference-masker sam2
 ```
 
-`wan-move-gguf`, `wan-1.3b-concat-id`, and `--reference-masker sam2` are experimental until real GPU validation is complete. Non-GPU CI covers their config, CLI, routing, and mocked backend contracts.
+`--reference-masker sam2` (SAM-2 propagation over the reference video) is the
+least battle-tested option; segmentation of the character image with
+`--segmenter sam2` is validated. Non-GPU CI covers config, CLI, routing, and
+mocked backend contracts.
 
-> **Identity note:** `wan-1.3b-concat-id` is a separate Concat-ID Wan2.1-T2V-1.3B experiment. It is not mixed into `wan-1.3b-vace` because the public Concat-ID Wan release uses a DiffSynth-style T2V runtime, not the VACE pipeline.
-
-> **Motion-conditioning note:** The current Diffusers, GGUF, and LightX2V Wan paths synthesize trajectory maps but pass trajectory metadata into the text prompt rather than injecting track tensors into the Wan-Move latent trajectory guidance runtime. The VACE path consumes skeleton/mask conditioning today. True `wan.WanMove` trajectory tensor integration is a release gate before claiming full Wan-Move motion-control parity. See [`docs/wan-move-trajectory-conditioning.md`](docs/wan-move-trajectory-conditioning.md).
+> **Conditioning note:** `wan-1.3b-vace` conditions the Wan2.1-VACE pipeline on
+> per-frame skeleton (OpenPose-18) and mask frames derived from the reference
+> video. Reference-image identity adherence is loose at 1.3B scale — see
+> [Known Limitations](#known-limitations).
 
 ### Presets
 
@@ -207,13 +173,9 @@ motion-mirror presets --list
 
 | Preset | Resolution | Frames | Density | Notes |
 |---|---|---|---|---|
-| `default` | 832×480 | 81 | 512 | Standard quality |
-| `hq` | 1280×720 | 81 | 1024 | Higher quality, more VRAM |
-| `mock` | 64×32 | 3 | 16 | For testing without GPU |
-| `low-vram` | 832×480 | 81 | 512 | `wan-1.3b-vace` with offload/T5 CPU |
-| `fast` | 832×480 | 81 | 512 | true LightX2V 4-step backend |
-| `gguf` | 832×480 | 81 | 512 | experimental GGUF-quantized Wan backend |
-| `identity` | 832×480 | 81 | 512 | experimental Concat-ID identity backend |
+| `default` | 832×480 | 81 | 512 | Standard quality, `wan-1.3b-vace` |
+| `low-vram` | 832×480 | 81 | 512 | `wan-1.3b-vace` with offload / T5 CPU |
+| `mock` | 128×64 | 4 | 32 | For testing without GPU |
 
 ### Benchmark
 
@@ -259,7 +221,7 @@ print(result.trajectory_path)    # .npz trajectory map
 ```python
 from motion_mirror import (
     NoPoseDetectedError,          # no person in reference video
-    MultiplePeopleDetectedError,  # >1 person detected (v0.1: single-person only)
+    MultiplePeopleDetectedError,  # >1 person detected (single-person only)
     SmallSubjectError,            # person occupies <5% of frame
     SmallSubjectWarning,          # person occupies 5–10% (warning, not error)
     UnsupportedImageError,        # unsupported image format
@@ -275,40 +237,50 @@ All exceptions inherit from `MotionMirrorError`.
 
 ## Known Limitations
 
-**Identity drift**
-The standard Wan I2V and VACE paths can drift from the input face during large head movements or fast motion. The v0.2b `wan-1.3b-concat-id` backend is an experimental identity path, but it still needs real GPU comparison before it can be recommended as the default.
+**Loose identity adherence at 1.3B scale**
+The Wan2.1-VACE 1.3B backend follows the reference motion well but does not
+strongly lock onto the input character's face and appearance — identity can
+drift, especially during large head movements or fast motion. This is a known
+limitation of the 1.3B model, not a bug. Strong identity preservation is a
+larger-model research problem and is not addressed at this scale.
 
 **Single-person only**
-Multi-person reference videos raise `MultiplePeopleDetectedError`. Crop the reference video to one person before running Motion Mirror.
+Multi-person reference videos raise `MultiplePeopleDetectedError`. Crop the
+reference video to one person before running Motion Mirror.
 
-**Backend maturity varies**
-`wan-1.3b-vace`, `wan-move-fast`, `wan-move-gguf`, RAFT, and SAM-2 options are v0.2a accessibility features. `wan-1.3b-concat-id` and ComfyUI nodes are v0.2b experimental features. `wan-move-gguf`, LightX2V fast mode, true Wan-Move trajectory conditioning, SAM-2 reference-video propagation, and Concat-ID identity quality are experimental until real GPU validation is complete.
+**SAM-2 reference-video masking is experimental**
+`--segmenter sam2` (character-image segmentation) is validated. `--reference-masker sam2`
+(SAM-2 mask propagation across the reference video) is newer and less tested.
 
-**8 GB+ GPU required for real generation**
-The 1.3B VACE backend targets 8-12 GB GPUs. The 14B full backend still requires much larger cards. CPU offloading uses system RAM as overflow storage during inference.
+**~9 GB+ free VRAM required for real generation**
+The 1.3B VACE backend measured an 8.02 GB peak with `--offload-model --t5-cpu`
+and needs ~9 GB free VRAM to run. CPU offloading uses system RAM as overflow
+storage during inference. Cards below this floor should use `--backend mock`.
 
-**~28 GB model download**
-First run requires downloading ~28 GB (Wan2.1-I2V) + ~350 MB (DWPose). A fast internet connection and ~50 GB free disk space are needed.
+**~5 GB model download**
+First run requires downloading ~5 GB (Wan2.1-VACE-1.3B) + ~350 MB (DWPose),
+plus ~900 MB if SAM-2 is used. Allow ~30 GB free disk space for caches and
+working files.
 
 **Generation time**
-With sequential CPU offloading (required for ≤32 GB VRAM), a 17-frame clip takes ~8–10 minutes on an RTX 5090. An 81-frame clip (~5 seconds at 16 fps) takes approximately 40–50 minutes. Generation is substantially faster on A100/H100 with full VRAM capacity.
+With sequential CPU offloading (required at ~9–12 GB VRAM), a short 17-frame
+clip takes several minutes; an 81-frame clip (~5 seconds at 16 fps) takes
+substantially longer. Generation is faster on larger cards (A100/H100) with more
+VRAM headroom.
 
 ---
 
 ## Validation Status
 
-Non-GPU CI passes for config, CLI, routing, mocks, and package imports. Real v0.2a hardware validation is still pending for the accessibility claims below:
+Non-GPU CI passes for config, CLI, routing, mocks, and package imports. GPU
+validation was run on RunPod (RTX 3090/4090, 2026-07-03) via `runpod-validation/`:
 
 | Backend | Target Hardware | Status |
 |---|---:|---|
-| `wan-1.3b-vace` | 8-12 GB | Needs measured VRAM/output validation |
-| `wan-move-fast` | 24 GB | Needs LightX2V GPU smoke after RunPod credits |
-| `wan-move-gguf` | 12-16 GB | Needs GGUF GPU smoke |
-| `wan-1.3b-concat-id` | 8-12 GB | Needs identity comparison GPU smoke |
-| `wan-move-14b` | 40 GB+ | Needs true Wan-Move trajectory-conditioning integration |
-| `--reference-masker sam2` | CUDA GPU | Needs SAM-2 propagation smoke |
+| `wan-1.3b-vace` | ~9–12 GB free VRAM | **PASS** — end-to-end motion transfer, 8.02 GB peak (17-frame smoke) |
+| `mock` | CPU / any | Testing only, no real generation |
 
-See [`docs/v02a-hardware-validation.md`](docs/v02a-hardware-validation.md) for the validation matrix and [`docs/windows-install.md`](docs/windows-install.md) for Windows setup notes.
+See [`docs/windows-install.md`](docs/windows-install.md) for Windows setup notes.
 
 ---
 
@@ -316,12 +288,12 @@ See [`docs/v02a-hardware-validation.md`](docs/v02a-hardware-validation.md) for t
 
 | Version | Focus | Key additions |
 |---|---|---|
-| **v0.1** | End-to-end pipeline | 14B backend, trajectory synthesis, CLI, UI |
-| **v0.2a** *(current)* | Hardware accessibility | 1.3B VACE, LightX2V 4-step, GGUF backend, RAFT/SAM-2 options |
-| **v0.2b** | Identity + ecosystem | Concat-ID (1.3B), ComfyUI nodes |
-| **v0.3** | Quality | IPRO 14B identity, CodeFormer, RIFE interpolation, CI benchmarks |
-| **v0.4** | Community | LoRA fine-tuning, batch mode, docs site |
-| **v1.0** | Stable | 50+ presets, PyPI + Docker, stable Python API |
+| **v0.1** | End-to-end pipeline | Trajectory synthesis, CLI, UI |
+| **v0.2** | Hardware accessibility | 1.3B VACE backend, RAFT / SAM-2 options |
+| **v0.3** *(current)* | VACE-only lineup | GPU-validated `wan-1.3b-vace`, ComfyUI nodes |
+| **v0.4** | Quality | Face restoration, frame interpolation, CI benchmarks |
+| **v0.5** | Community | LoRA fine-tuning, batch mode, docs site |
+| **v1.0** | Stable | Preset library, PyPI + Docker, stable Python API |
 
 ---
 
@@ -347,3 +319,5 @@ CI runs `pytest -m "not gpu"` on every push via GitHub Actions. GPU tests are se
 Apache 2.0. See [LICENSE](LICENSE) for details.
 
 Model weights and third-party dependencies retain their own licenses — see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for the full breakdown. Generated outputs are subject to the Wan2.1 model card terms (also Apache 2.0, commercial use permitted).
+</content>
+</invoke>

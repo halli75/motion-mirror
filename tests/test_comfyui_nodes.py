@@ -27,6 +27,17 @@ def test_comfyui_node_mappings_include_v02b_nodes():
     assert "MotionMirrorGenerate" in comfyui_nodes.NODE_CLASS_MAPPINGS
 
 
+def test_generate_node_backend_dropdown_matches_backend_names():
+    from typing import get_args
+
+    import comfyui_nodes
+    from motion_mirror.config import BackendName
+
+    node_cls = comfyui_nodes.NODE_CLASS_MAPPINGS["MotionMirrorGenerate"]
+    backends = node_cls.INPUT_TYPES()["required"]["backend"][0]
+    assert set(backends) == set(get_args(BackendName))
+
+
 def test_motion_mirror_generate_routes_through_model_management(tmp_path, monkeypatch):
     from comfyui_nodes.nodes import MotionMirrorGenerate
 
@@ -48,7 +59,7 @@ def test_motion_mirror_generate_routes_through_model_management(tmp_path, monkey
     result = MotionMirrorGenerate().run(
         str(image),
         str(motion),
-        "wan-1.3b-concat-id",
+        "wan-1.3b-vace",
         "832x480",
         81,
         512,
@@ -58,7 +69,7 @@ def test_motion_mirror_generate_routes_through_model_management(tmp_path, monkey
     )
 
     assert result == (str(tmp_path / "result.mp4"),)
-    assert calls["backend"] == "wan-1.3b-concat-id"
+    assert calls["backend"] == "wan-1.3b-vace"
     assert calls["image_path"] == str(image)
     assert calls["motion_video_path"] == str(motion)
     assert calls["pose_path"] == "pose.npz"

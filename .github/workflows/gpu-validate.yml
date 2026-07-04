@@ -8,22 +8,11 @@
 name: GPU validate
 
 on:
-  workflow_dispatch:
-    inputs:
-      role:
-        description: "Pod role: a = 24GB matrix, b = 48GB wan-move-14b"
-        type: choice
-        options: ["a", "b"]
-        default: "a"
-      tier_a:
-        description: "MM_TIER_A: 1 = lean run (vace/gguf/fast + tier probe), 0 = full matrix"
-        type: choice
-        options: ["1", "0"]
-        default: "1"
+  workflow_dispatch: {}
 
 jobs:
   gpu-validate:
-    name: RunPod GPU validation (role ${{ inputs.role }})
+    name: RunPod GPU validation (VACE)
     runs-on: ubuntu-latest
     # Orchestrator enforces its own wall cap (~3.5h) and terminates the pod in
     # a finally block; the job timeout is a backstop above that.
@@ -46,13 +35,12 @@ jobs:
       - name: Run validation
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
-          MM_TIER_A: ${{ inputs.tier_a }}
-        run: python runpod-validation/orchestrate.py run --role ${{ inputs.role }}
+        run: python runpod-validation/orchestrate.py run
 
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gpu-evidence-role-${{ inputs.role }}
+          name: gpu-evidence-vace
           path: runpod-validation/evidence/
           if-no-files-found: warn

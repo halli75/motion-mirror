@@ -41,7 +41,7 @@ def _make_video(path: Path, frames: int = 5, size: tuple[int, int] = (256, 256))
 def test_extract_pose_real_shape(tmp_path):
     """Real DWPose inference — output shape must be (F, 133, 3) when a person is found."""
     vid_path = _make_video(tmp_path / "motion.mp4", frames=5)
-    cfg = MotionMirrorConfig(backend="wan-move-14b", device="cuda")
+    cfg = MotionMirrorConfig(backend="wan-1.3b-vace", device="cuda")
     try:
         pose = extract_pose(vid_path, cfg)
     except (NoPoseDetectedError, SmallSubjectError) as exc:
@@ -58,7 +58,7 @@ def test_extract_pose_real_shape(tmp_path):
 def test_extract_pose_real_confidence_range(tmp_path):
     """Confidence values (keypoints[:, :, 2]) must be in [0, 1] when a person is found."""
     vid_path = _make_video(tmp_path / "motion.mp4", frames=3)
-    cfg = MotionMirrorConfig(backend="wan-move-14b", device="cuda")
+    cfg = MotionMirrorConfig(backend="wan-1.3b-vace", device="cuda")
     try:
         pose = extract_pose(vid_path, cfg)
     except (NoPoseDetectedError, SmallSubjectError) as exc:
@@ -74,7 +74,7 @@ def test_extract_pose_real_missing_weights_raises(tmp_path):
     """FileNotFoundError raised when DWPose ONNX models are not present."""
     vid_path = _make_video(tmp_path / "motion.mp4", frames=3)
     cfg = MotionMirrorConfig(
-        backend="wan-move-14b",
+        backend="wan-1.3b-vace",
         device="cuda",
         cache_dir=tmp_path / "empty_cache",
     )

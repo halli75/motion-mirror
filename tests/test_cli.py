@@ -62,10 +62,7 @@ def test_run_help_documents_v02a_public_surface():
     assert result.exit_code == 0
     out = _plain(result.output)
     for text in (
-        "wan-move-gguf",
-        "wan-move-fast",
         "wan-1.3b-vace",
-        "wan-1.3b-concat-id",
         "--auto",
         "--offload-model",
         "--t5-cpu",
@@ -74,23 +71,6 @@ def test_run_help_documents_v02a_public_surface():
         "--reference-masker",
     ):
         assert text in out
-
-
-def test_download_cache_requires_required_paths(tmp_path):
-    spec = {
-        "filename": None,
-        "required_paths": ["model_index.json", "weights"],
-    }
-    cache_dir = tmp_path / "model"
-    cache_dir.mkdir()
-    (cache_dir / "model_index.json").write_text("{}", encoding="utf-8")
-
-    assert not _is_spec_cached(cache_dir, spec)
-
-    weights = cache_dir / "weights"
-    weights.mkdir()
-    (weights / "part.bin").write_bytes(b"weights")
-    assert _is_spec_cached(cache_dir, spec)
 
 
 def test_download_cache_rejects_tiny_partial_snapshot(tmp_path):
@@ -108,10 +88,10 @@ def test_download_cache_rejects_tiny_partial_snapshot(tmp_path):
     assert _is_spec_cached(cache_dir, spec)
 
 
-def test_wan_move_spec_counts_full_snapshot():
-    spec = _MODEL_SPECS["wan-move"]
-    assert spec["expected_bytes"] == 42_000_000_000
-    assert spec["min_cached_bytes"] == 35_000_000_000
+def test_vace_spec_counts_snapshot():
+    spec = _MODEL_SPECS["wan-1.3b-vace"]
+    assert spec["expected_bytes"] == 5_000_000_000
+    assert spec["min_cached_bytes"] == 3_000_000_000
 
 
 def test_download_preflight_rejects_free_space_within_margin(tmp_path):
@@ -140,9 +120,9 @@ def test_presets_list_shows_default():
     assert "default" in _ascii(result.output)
 
 
-def test_presets_list_shows_hq():
+def test_presets_list_shows_low_vram():
     result = runner.invoke(app, ["presets", "--list"])
-    assert "hq" in _ascii(result.output)
+    assert "low-vram" in _ascii(result.output)
 
 
 def test_presets_list_shows_mock():

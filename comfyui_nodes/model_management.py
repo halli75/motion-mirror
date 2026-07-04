@@ -1,7 +1,7 @@
 """ComfyUI model-management integration helpers.
 
 This module is intentionally small. Generation must enter through here so future
-Wan/Concat-ID model loading can cooperate with ComfyUI VRAM arbitration instead
+Wan VACE model loading can cooperate with ComfyUI VRAM arbitration instead
 of bypassing it with direct CUDA allocation.
 """
 from __future__ import annotations

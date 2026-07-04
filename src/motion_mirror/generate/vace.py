@@ -32,7 +32,7 @@ _NEGATIVE_PROMPT = (
 )
 
 
-def generate_with_controlnet(
+def generate_with_vace(
     request: GenerationRequest,
     config: MotionMirrorConfig | None = None,
 ) -> GenerationResult:
@@ -76,7 +76,7 @@ def _generate_mock(
     writer.release()
     return GenerationResult(
         video_path=request.output_path,
-        backend="mock-controlnet",
+        backend="mock",
         resolution=request.resolution,
         num_frames=request.frames,
     )
@@ -150,25 +150,26 @@ def _generate_vace_1b(
     )
 
     generator = torch.Generator(device=device).manual_seed(request.seed)
-    output = pipe(
-        video=conditioning_video,
-        mask=conditioning_mask,
-        reference_images=[reference_image],
-        prompt=_VACE_PROMPT,
-        negative_prompt=_NEGATIVE_PROMPT,
-        height=height,
-        width=width,
-        num_frames=request.frames,
-        num_inference_steps=30,
-        guidance_scale=5.0,
-        generator=generator,
-    ).frames[0]
+    try:
+        output = pipe(
+            video=conditioning_video,
+            mask=conditioning_mask,
+            reference_images=[reference_image],
+            prompt=_VACE_PROMPT,
+            negative_prompt=_NEGATIVE_PROMPT,
+            height=height,
+            width=width,
+            num_frames=request.frames,
+            num_inference_steps=30,
+            guidance_scale=5.0,
+            generator=generator,
+        ).frames[0]
 
-    _write_output_video(request.output_path, output)
-
-    del pipe, vae
-    if getattr(torch.cuda, "is_available", lambda: False)():
-        torch.cuda.empty_cache()
+        _write_output_video(request.output_path, output)
+    finally:
+        del pipe, vae
+        if getattr(torch.cuda, "is_available", lambda: False)():
+            torch.cuda.empty_cache()
 
     return GenerationResult(
         video_path=request.output_path,
@@ -189,6 +190,14 @@ def _validate_vace_inputs(request: GenerationRequest) -> None:
             raise ValueError(f"VACE input {label} was not provided.")
         if not path.exists():
             raise FileNotFoundError(f"VACE input {label} not found: {path}")
+
+    # Wan VACE's temporal VAE compresses in groups of 4 frames plus a leading
+    # keyframe, so num_frames must satisfy (n - 1) % 4 == 0 (e.g. 81, 61, 17).
+    if (request.frames - 1) % 4 != 0:
+        raise ValueError(
+            f"VACE requires num_frames of the form 4k+1 (e.g. 17, 61, 81); "
+            f"got {request.frames}."
+        )
 
 
 def _resolve_model_source(config: MotionMirrorConfig) -> str:

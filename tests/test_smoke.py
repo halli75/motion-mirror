@@ -5,7 +5,7 @@ from motion_mirror.pipeline import PipelineRunResult
 
 def test_pipeline_instantiates_with_defaults() -> None:
     pipeline = MotionMirrorPipeline()
-    assert pipeline.config.backend == "wan-move-14b"
+    assert pipeline.config.backend == "wan-1.3b-vace"
     assert pipeline.config.trajectory_density == 512
 
 

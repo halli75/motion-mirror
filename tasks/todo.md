@@ -1,111 +1,50 @@
-# Motion Mirror CI Failure
+# v0.3 — Shift to VACE-only backend
 
-## Checklist
-- [x] Fetch latest failing CI metadata/log evidence and identify the failed step.
-- [x] Reproduce the likely traceback locally under a no-`torch` condition.
-- [x] Patch the minimal failure surface.
-- [x] Run import checks and non-GPU tests.
-- [x] Record review/results.
+Plan: delete dead backends (wan-move-14b/fast/gguf, concat-id), rename controlnet.py → vace.py,
+single-tier hardware, clean presets/CLI/docs/CI/harness. Verify via gates + Sonnet review wave.
+GPU testing deferred pending user approval.
 
-## Evidence
-- GitHub Actions run `24632146935` failed in job `Lint + non-GPU tests`.
-- Public job metadata shows `Check imports` passed and `Run non-GPU tests` failed.
-- Raw Actions logs require authenticated access that is not exposed in this session; no GitHub MCP resources are configured and `gh` is not installed.
-- The public annotations API only reports `Process completed with exit code 1`.
-- Local CI-style pytest passes on this machine because `torch` is installed.
-- Simulating CI without `torch` reproduces the suspected failure:
-  `tests/test_segment_sam2.py::test_segment_sam2_dispatch_calls_predictor` fails at `src/motion_mirror/extract/segment.py` when `_segment_sam2()` imports `torch`.
+## Wave 1 — parallel packages (Opus)
+- [x] A core src: generate/ rename+deletions, models.py, config.py, hardware.py, pipeline.py, types.py
+- [x] B interfaces: cli.py, ui/app.py, presets ×2, comfyui_nodes/, pyproject.toml
+- [x] D docs: README, delete 5 stale docs, v02b-scope.md, windows-install.md, THIRD_PARTY_LICENSES
+- [x] E validation infra: gpu-validate.yml, orchestrate.py, pod_bootstrap.sh, runpod-validation/README, v02a_gpu_smoke.py
 
-## Review
-- `_segment_sam2()` now imports `torch` only for CUDA inference contexts.
-- CPU and mocked SAM-2 paths use no-op contexts, so the non-GPU test contract does not require `torch`.
-- The existing SAM-2 dispatch test now blocks `torch` through `sys.modules` to cover the CI dependency shape.
+## Wave 2 — tests (after A+B)
+- [x] C tests: delete dead-backend tests, rewrite test_hardware.py (11 single-tier), rename controlnet→vace, 4 new tests
 
-## Verification
-- `python -c "import motion_mirror; print('motion_mirror OK')"`: passed.
-- `python -c "from motion_mirror.cli import app; print('cli OK')"`: passed.
-- `python -c "from motion_mirror.ui.app import create_app; print('ui OK')"`: passed.
-- No-`torch` targeted reproduction: `tests/test_segment_sam2.py::test_segment_sam2_dispatch_calls_predictor` passed.
-- `pytest -m "not gpu" -q --tb=short`: `172 passed, 9 deselected, 17 warnings`.
-
----
-
-# Motion Mirror v0.2a Completion
-
-## Checklist
-- [x] Fan out implementation agents for GGUF backend, hardware routing, SAM-2 propagation, and docs/tests.
-- [x] Add real experimental `wan-move-gguf` backend via Diffusers GGUF loading.
-- [x] Replace basic hardware auto-selection with v0.2a tier policy.
-- [x] Add opt-in SAM-2 reference-video mask propagation.
-- [x] Refresh README and license docs for v0.2a.
-- [x] Run import checks, targeted tests, and full non-GPU pytest.
+## Wave 3 — verification gates
+- [x] Import checks (generate_with_vace, pipeline, cli, ui)
+- [x] pytest -m "not gpu" all green (228 passed)
+- [x] Grep sweep: wan-move|wan_move|concat.id|lightx2v|gguf|controlnet (survivors: render_skeleton controlnet_aux provenance + one intentional "dropped" note in v02b-scope.md)
+- [x] diff -r presets/ src/motion_mirror/presets/ parity (only .gitkeep, pre-existing)
+- [x] python -m build --wheel (motion_mirror-0.3.0a0)
+- [x] shellcheck runpod-validation/*.sh
+- [x] Sonnet 5 review wave (5 reviewers); triaged; real findings fixed; re-ran gates
+- [x] Rewrite handoff.md; complete this checklist + review section; commit(s) on runpod-v02a-validation
+- [x] STOP — report to user for live GPU testing approval
 
 ## Review
-- `wan-move-gguf` is now a routed Wan backend that loads a GGUF transformer through Diffusers model-level loading and returns `GenerationResult.backend == "wan-move-gguf"`.
-- `backend="auto"` now uses richer free-VRAM tiers: 8 GB VACE, 16 GB GGUF, 24 GB LightX2V fast, and 40 GB full 14B.
-- `reference_masker="sam2"` adds optional reference-video mask propagation without changing the default pose-derived mask path.
-- VACE mask loading now re-binarizes grayscale masks, and SAM-2 propagated masks are inverted to the existing VACE mask polarity.
-- README and third-party license notes now describe the v0.2a backend surface and experimental caveats.
 
-## Verification
-- `python -m py_compile` on modified Python modules: passed.
-- Pinned import checks with `PYTHONPATH=C:\Users\arnav\motion-mirror\src`: passed for package, CLI, and UI.
-- Targeted v0.2a tests: `115 passed, 6 warnings`.
-- Full non-GPU suite: `202 passed, 9 deselected, 17 warnings`.
-- Real GPU validation was not run.
+**Scope executed**: 4 dead backends deleted end-to-end (code, tests, presets, extras, docs,
+CI, harness). controlnet.py → vace.py with history. Net diff ≈ +600/−3700 lines.
 
----
+**Review wave results** (5 Sonnet reviewers over staged diff):
+- correctness/dead-refs: clean, zero findings (mock-path 4k+1 risk traced safe).
+- CI/harness: clean, zero findings.
+- docs: comfyui README v0.2b/CodeFormer staleness (fixed); phantom MOTION_MIRROR_MODEL_DIR
+  env var in windows-install (fixed — junction guidance instead); Pillow/ftfy license
+  entries (fixed); v02b-scope.md filename cosmetic (deferred).
+- tests: new tests mutation-verified non-tautological; REAL src bug — no try/finally around
+  pipe() so CUDA cache cleanup skipped on exception (fixed + 2 tests); preset 4k+1 CI guard
+  (added); comfyui dropdown test (added).
+- elegance: dead multi-source download machinery in cli.py removed (~30 lines); valid_backends
+  now derived from BackendName; stale ~8 GB comment fixed. False positives: recommend_backend
+  signature (plan-spec'd), vace single-item group (plan-spec'd), generate/__init__ re-export
+  (public API), request.backend mock check (two legit entry points).
 
-# Motion Mirror Next Steps
+**Final verification**: 228 passed / 7 gpu-deselected; wheel 0.3.0a0 builds + installs
+(--help / presets --list / download --help smoke pass); shellcheck clean; grep sweep clean.
 
-## PR Closeout
-- PR #1 (`feat(v0.2a): add accessible backends and masking`) merged into `main`.
-- Merge commit on `main`: `25c28d9`.
-- GitHub Actions `Lint + non-GPU tests` passed before merge.
-- Local `main` synced to `origin/main` after merge.
-
-## Release Hardening Review
-- Added `scripts/v02a_gpu_smoke.py` to run repeatable backend smoke validation on CUDA machines and emit JSON evidence.
-- Added `docs/v02a-hardware-validation.md` with the v0.2a GPU validation matrix and acceptance criteria.
-- Added `docs/windows-install.md` for the Windows CUDA install and smoke-test path.
-- Added `docs/wan-move-trajectory-conditioning.md` to document the true Wan-Move integration gap and upstream `wan.WanMove` API shape.
-- Added `docs/v02b-scope.md` for Concat-ID and ComfyUI sequencing.
-- Tightened model-cache completeness checks so partial model directories are not treated as valid downloads.
-- Updated README and runtime warnings to state that Diffusers/GGUF/LightX2V Wan paths are still prompt-only with respect to trajectory metadata.
-- Removed public references to unsupported `--person-index` behavior.
-
-## Release Hardening Verification
-- PR #1 merge and local `main` sync: passed.
-- CUDA check on this workstation: `torch.cuda.is_available() == False`; real GPU validation still requires RunPod or another CUDA host.
-- `python scripts\v02a_gpu_smoke.py --help`: passed.
-- `scripts/v02a_gpu_smoke.py` config construction bug fixed and covered by `tests/test_v02a_gpu_smoke.py`.
-- `python -m build --wheel`: passed and included packaged presets.
-- Clean wheel install smoke with `PYTHONPATH` cleared: `motion-mirror --help`, `motion-mirror presets --list`, and `motion-mirror download --help` passed.
-- Targeted tests: `pytest tests/test_v02a_gpu_smoke.py tests/test_cli.py tests/test_generate.py -q --tb=short` passed (`41 passed`).
-- Full non-GPU suite: `pytest -m "not gpu" -q --tb=short` passed (`206 passed, 9 deselected, 22 warnings`).
-- Compile check for changed Python files: passed.
-- `git diff --check`: passed with Windows line-ending warnings only.
-
----
-
-# Motion Mirror v0.2b Start
-
-## Concat-ID Compatibility Spike
-- Researched the public Concat-ID Wan release and treated it as a separate backend because it targets `Wan2.1-T2V-1.3B` through DiffSynth-style runtime code, not `WanVACEPipeline`.
-- Added the experimental backend `wan-1.3b-concat-id` with lazy runtime imports, asset checks, and clear missing dependency/weight errors.
-- Added `identity` preset and `concat-id` / `identity` download groups.
-- Updated README, docs, UI, CLI, and third-party license notes to keep Concat-ID GPU validation pending.
-
-## ComfyUI Scaffold
-- Added `comfyui_nodes/` with `MotionMirrorPoseExtract`, `MotionMirrorTrajectoryGen`, and `MotionMirrorGenerate`.
-- Routed generation through `comfyui_nodes/model_management.py` so future backend loading can cooperate with ComfyUI model-management hooks.
-- Kept `MotionMirrorFaceRestore` out of scope for v0.2b.
-
-## v0.2b Verification
-- Targeted v0.2b tests: `pytest tests/test_concat_id.py tests/test_config_v02a.py tests/test_cli.py tests/test_comfyui_nodes.py tests/test_ui.py -q --tb=short` passed (`54 passed, 5 warnings`).
-- Full non-GPU suite: `pytest -m "not gpu" -q --tb=short` passed (`214 passed, 9 deselected, 22 warnings`).
-- Compile check for changed Python files: passed.
-- `git diff --check`: passed with Windows line-ending warnings only.
-- `python -m build --wheel`: passed and included `motion_mirror/presets/identity.toml`.
-- Clean wheel smoke with `PYTHONPATH` cleared: `motion-mirror --help`, `motion-mirror presets --list`, and `motion-mirror download --help` passed.
-- Real GPU validation remains deferred for v0.2a hardware claims and v0.2b Concat-ID identity comparison.
+**Deferred**: GPU confirm run of v0.3 tree (user approval gate); 81-frame follow-up;
+docs/v02b-scope.md rename; identity-quality research (VACE-14B).

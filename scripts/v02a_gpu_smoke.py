@@ -19,12 +19,7 @@ import cv2
 
 from motion_mirror import MotionMirrorConfig, MotionMirrorPipeline
 
-V02A_BACKENDS = (
-    "wan-1.3b-vace",
-    "wan-move-fast",
-    "wan-move-gguf",
-    "wan-move-14b",
-)
+V02A_BACKENDS = ("wan-1.3b-vace",)
 
 
 @dataclass(slots=True)

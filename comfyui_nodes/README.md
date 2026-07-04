@@ -1,6 +1,6 @@
 # Motion Mirror ComfyUI Nodes
 
-This directory is the v0.2b ComfyUI custom-node package.
+This directory is the Motion Mirror ComfyUI custom-node package.
 
 ## Nodes
 
@@ -14,7 +14,7 @@ This directory is the v0.2b ComfyUI custom-node package.
   when omitted it runs the full pipeline end-to-end.
 
 `MotionMirrorGenerate` routes through `comfyui_nodes/model_management.py` so
-future Wan and Concat-ID model loading can cooperate with ComfyUI's model
+future Wan VACE model loading can cooperate with ComfyUI's model
 management hooks instead of allocating CUDA memory directly. Intermediate
 artifacts are written under ComfyUI's output directory (`motion_mirror/`).
 
@@ -30,10 +30,10 @@ pip install -e .
 Install optional extras for the backend you plan to use, for example:
 
 ```bash
-pip install -e ".[concat-id]"
+pip install -e ".[gpu-inference]"
 ```
 
 ## Scope
 
 Real GPU workflow validation is deferred. Do not add a
-`MotionMirrorFaceRestore` node in v0.2b; CodeFormer belongs to v0.3 scope.
+`MotionMirrorFaceRestore` node; face restoration belongs to a later release.

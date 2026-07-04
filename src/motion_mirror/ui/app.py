@@ -104,11 +104,7 @@ def create_app(config: "MotionMirrorConfig | None" = None):
                 backend_dd = gr.Dropdown(
                     choices=[
                         "auto",
-                        "wan-move-14b",
-                        "wan-move-fast",
-                        "wan-move-gguf",
                         "wan-1.3b-vace",
-                        "wan-1.3b-concat-id",
                         "mock",
                     ],
                     value=cfg_defaults.backend,

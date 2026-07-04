@@ -109,14 +109,18 @@ def test_resample_reference_masks_resizes_and_resamples():
     assert out[0, 2:6, 2:6].max() == 255
 
 
-def test_reference_mask_to_vace_frame_inverts_foreground():
+def test_reference_mask_to_vace_frame_keeps_subject_white():
+    """VACE mask polarity: white = generate. The subject must stay white so
+    generation happens where the person is; a black subject makes VACE copy
+    the control video's skeleton pixels through verbatim (2026-07-04 GPU run).
+    """
     mask = np.zeros((4, 4), dtype=np.uint8)
     mask[1:3, 1:3] = 255
 
     frame = _reference_mask_to_vace_frame(mask)
 
-    assert frame[1, 1, 0] == 0
-    assert frame[0, 0, 0] == 255
+    assert frame[1, 1, 0] == 255
+    assert frame[0, 0, 0] == 0
 
 
 def test_write_vace_reference_mask_video_uses_vace_polarity(tmp_path):
@@ -143,5 +147,5 @@ def test_write_vace_reference_mask_video_uses_vace_polarity(tmp_path):
         )
 
     assert captured
-    assert captured[0][1, 1, 0] == 0
-    assert captured[0][0, 0, 0] == 255
+    assert captured[0][1, 1, 0] == 255
+    assert captured[0][0, 0, 0] == 0

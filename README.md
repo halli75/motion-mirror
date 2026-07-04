@@ -50,7 +50,7 @@ character.png + motion_video.mp4
 
 CPU-only mode is not supported for real generation (mock mode works for testing).
 
-> **VRAM note:** `--auto` chooses from free CUDA VRAM: 8-12 GB uses `wan-1.3b-vace`, 16-24 GB uses experimental `wan-move-gguf`, 24-40 GB uses `wan-move-fast`, and 40 GB+ uses `wan-move-14b`.
+> **VRAM note:** `--auto` chooses from free CUDA VRAM: 9-12.5 GB uses `wan-1.3b-vace` with full offload (measured 8.02 GB peak), 12.5-24 GB uses experimental `wan-move-gguf` (measured 11.52 GB peak), 24-40 GB uses `wan-move-fast`, and 40 GB+ uses `wan-move-14b`. Floors are measured peak + 1 GB headroom (RTX 3090/4090 validation, 2026-07-03).
 
 ---
 

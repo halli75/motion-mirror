@@ -77,9 +77,21 @@ python scripts\v02a_gpu_smoke.py `
 | `wan-move-14b` | 40 GB+ | Full backend remains readable and stable |
 | `wan-1.3b-vace` + `--reference-masker sam2` | 24 GB+ validation box | SAM-2 propagated mask video is produced and consumed |
 
-## Current Local Status
+## Validation Status (RunPod, RTX 3090/4090, 2026-07-03)
 
-On the current Windows workstation, `torch` is installed but
-`torch.cuda.is_available()` returns `False`. `nvidia-smi` also cannot be used
-without administrator permissions. Real GPU validation therefore still needs a
-CUDA machine such as RunPod before v0.2a can be called hardware-validated.
+Measured on 17-frame smokes via `runpod-validation/` (81-frame follow-ups
+still owed per the rule above):
+
+| Backend | Result | Peak VRAM |
+|---|---|---:|
+| `wan-1.3b-vace` | **PASS** — photorealistic dancer following the extracted motion (canonical OpenPose-18 conditioning + subject-centric prompt). Reference-image identity adherence is loose; strong identity is the Concat-ID track. | 8.02 GB |
+| `wan-move-gguf` | **PASS** — renders the reference ballerina (fp32-VAE path). Motion is prompt-only until Wave-3 trajectory conditioning. | 11.52 GB |
+| `wan-move-fast` | FAIL — LightX2V hard-imports `flash_attn`; prebuilt wheels fail ABI import on the pod image. Needs a custom wheel/image (Wave 3). | — |
+| `wan-1.3b-concat-id` | Not run — requires the unmerged Concat-ID DiffSynth fork. | — |
+| `wan-move-14b` | Not run — 48 GB pod deferred. | — |
+
+The former 12 GB `t5_cpu`-only middle tier was probed and removed:
+`pipe.to(cuda)` transiently peaked at 15.07 GB (T5 lands on GPU before the
+`t5_cpu` move) and generation crashed at VAE encode (bf16 input into the
+fp32 VAE without accelerate's auto-casting hooks). 12 GB cards use the
+fully-offloaded vace tier.

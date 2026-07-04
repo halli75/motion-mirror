@@ -285,7 +285,6 @@ def fetch_evidence(pod_id: str, role: str) -> None:
             "evidence/smoke/vace.json", "evidence/smoke/gguf.json",
             "evidence/smoke/fast.json", "evidence/smoke/sam2-vace.json",
             "evidence/smoke/full.json",
-            "evidence/tier-probe/vace-tier-probe.json",
         ]
     got = 0
     for path in dict.fromkeys(paths):  # dedupe, keep order

@@ -14,11 +14,10 @@ API.
 - `samples.json` — committed record of the chosen inputs. Pods re-fetch the
   same URLs and verify sha256.
 - `pod_bootstrap.sh` — runs ON the pod (`MM_ROLE=a|b`). Role `a` (24 GB):
-  vace → gguf → fast → sam2-vace smokes, Concat-ID pytest, 12 GB-tier probe.
-  Role `b` (48 GB): wan-move-14b smoke.
-- `vace_tier_probe.py` — measures vace peak VRAM with `t5_cpu=True,
-  offload_model=False` (the 12 GB auto-tier config the smoke script never
-  measures because it hardcodes both flags on).
+  vace → gguf → fast → sam2-vace smokes, Concat-ID pytest. `MM_TIER_A=1`
+  runs the lean vace + gguf re-validation only. Role `b` (48 GB):
+  wan-move-14b smoke. (The 12 GB-tier probe was retired 2026-07-03 after it
+  measured a 15.07 GB transient peak — the tier itself was removed.)
 - `orchestrate.py` — LOCAL. Launch → poll → fetch evidence → terminate.
   Spend guard tracks only pods it created (`costPerHr × uptime`), never
   account balance deltas — the account may have unrelated pods running.

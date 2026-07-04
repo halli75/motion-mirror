@@ -311,7 +311,10 @@ def _write_mask_video(path: Path, masks: np.ndarray, fps: float) -> None:
 
 
 def _reference_mask_to_vace_frame(mask: np.ndarray) -> np.ndarray:
-    vace_mask = np.where(mask > 127, np.uint8(0), np.uint8(255))
+    # VACE mask polarity: white = generate, black = keep from the control
+    # video. The subject must be WHITE — a black subject makes VACE copy the
+    # control video's skeleton pixels through verbatim (2026-07-04 GPU run).
+    vace_mask = np.where(mask > 127, np.uint8(255), np.uint8(0))
     return cv2.cvtColor(vace_mask, cv2.COLOR_GRAY2BGR)
 
 

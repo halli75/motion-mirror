@@ -545,16 +545,52 @@ def test_resolve_wan_model_source_incomplete_cache_raises(tmp_path):
         wan_move._resolve_wan_model_source(cfg)
 
 
-def test_resolve_wan_gguf_base_source_missing_raises(tmp_path):
+def test_resolve_wan_gguf_base_source_absent_dir_falls_back_to_hub(tmp_path):
+    # First-time path: no local wan-move cache at all -> hub download is the
+    # legitimate way to obtain the base components (fresh pod / fresh install).
     cfg = MotionMirrorConfig(
         project_root=tmp_path,
         cache_dir=tmp_path / "cache",
         backend="wan-move-gguf",
         device="cpu",
     )
+    assert not (cfg.cache_dir / "wan-move").exists()
 
-    with pytest.raises(FileNotFoundError, match="base"):
+    assert (
         wan_move._resolve_wan_gguf_base_source(cfg)
+        == wan_move._WAN_GGUF_BASE_MODEL_ID
+    )
+
+
+def test_resolve_wan_gguf_base_source_incomplete_cache_raises(tmp_path):
+    # Register #8: a partially-downloaded cache must raise, not silently
+    # trigger a multi-GB hub re-download.
+    cfg = MotionMirrorConfig(
+        project_root=tmp_path,
+        cache_dir=tmp_path / "cache",
+        backend="wan-move-gguf",
+        device="cpu",
+    )
+    model_dir = cfg.cache_dir / "wan-move"
+    model_dir.mkdir(parents=True)
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError, match="incomplete|model_index"):
+        wan_move._resolve_wan_gguf_base_source(cfg)
+
+
+def test_resolve_wan_gguf_base_source_complete_cache_used(tmp_path):
+    cfg = MotionMirrorConfig(
+        project_root=tmp_path,
+        cache_dir=tmp_path / "cache",
+        backend="wan-move-gguf",
+        device="cpu",
+    )
+    model_dir = cfg.cache_dir / "wan-move"
+    model_dir.mkdir(parents=True)
+    (model_dir / "model_index.json").write_text("{}", encoding="utf-8")
+
+    assert wan_move._resolve_wan_gguf_base_source(cfg) == str(model_dir)
 
 
 def test_resolve_generator_device_falls_back_to_cpu_without_cuda(tmp_path):
@@ -776,3 +812,22 @@ class patch_sys_modules:
             if name not in self.previous:
                 sys.modules.pop(name, None)
         return False
+
+
+def test_vace_prompt_never_names_the_control_modality():
+    # The text prompt dominates subject choice: naming the conditioning signal
+    # ("skeleton") made VACE render an anatomical skeleton instead of the
+    # reference character (Wave-2 GPU run, 2026-07-03). The prompt must
+    # describe the desired subject, never the mechanism.
+    from motion_mirror.generate import controlnet
+
+    banned = ("skeleton", "pose", "bones", "control", "stick figure")
+    prompt = controlnet._VACE_PROMPT.lower()
+    for word in banned:
+        assert word not in prompt, f"control-modality word {word!r} in VACE prompt"
+
+    assert "reference image" in prompt
+
+    negative = controlnet._NEGATIVE_PROMPT.lower()
+    for word in ("skeleton", "x-ray", "stick figure"):
+        assert word in negative, f"{word!r} missing from negative prompt"

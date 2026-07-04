@@ -11,7 +11,18 @@ from ..types import GenerationResult
 from .models import GenerationRequest
 
 _WAN_VACE_MODEL_ID = "Wan-AI/Wan2.1-VACE-1.3B-diffusers"
+# Describe the desired subject, NEVER the conditioning mechanism: the text
+# prompt dominates subject choice, and naming the control signal ("skeleton")
+# made VACE render an anatomical skeleton instead of the reference character
+# (Wave-2 GPU run, 2026-07-03).
+_VACE_PROMPT = (
+    "A person performs a smooth, continuous dance in a well-lit space. "
+    "The person's appearance, face, hairstyle, and clothing exactly match "
+    "the reference image. Photorealistic, natural lighting, high detail, "
+    "stable camera, clean anatomy."
+)
 _NEGATIVE_PROMPT = (
+    "skeleton, bones, x-ray, anatomical model, stick figure, line drawing, "
     "Bright tones, overexposed, static, blurred details, subtitles, style, "
     "works, paintings, images, static, overall gray, worst quality, low quality, "
     "JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, "
@@ -138,16 +149,12 @@ def _generate_vace_1b(
         expected_frames=request.frames,
     )
 
-    prompt = (
-        "Animate the reference character following the provided skeleton motion. "
-        "Preserve character identity, keep anatomy clean, and maintain stable motion."
-    )
     generator = torch.Generator(device=device).manual_seed(request.seed)
     output = pipe(
         video=conditioning_video,
         mask=conditioning_mask,
         reference_images=[reference_image],
-        prompt=prompt,
+        prompt=_VACE_PROMPT,
         negative_prompt=_NEGATIVE_PROMPT,
         height=height,
         width=width,

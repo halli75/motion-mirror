@@ -40,12 +40,11 @@ BRANCH = "runpod-v02a-validation"
 REPO_URL = "https://github.com/halli75/motion-mirror.git"
 IMAGE = "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
 
-# TODO(gpu-run): SPEND_CAP_USD / wall_cap_h below (currently $4.50 / 3.5 h) are
-# almost certainly too tight for the Phase 2 matrix — ~130 GB of downloads
-# (est. 45-90 min) plus two 14B smokes under sequential CPU offload
-# (est. 20-60 min EACH). Realistic budget is ~6 h wall. DO NOT bump the numbers
-# silently: re-confirm the spend cap with the user before the next launch.
-SPEND_CAP_USD = 4.50
+# Caps sized 2026-07-04 for the Phase 2 matrix (~118 GB downloads + two 14B
+# smokes under offload). SPEND_CAP is set BELOW the account balance (~$4.19)
+# so our guard fires before RunPod force-kills pods at $0 balance and evidence
+# is salvaged first.
+SPEND_CAP_USD = 3.75
 # Phase 2 lineup: a single large-disk pod runs the 3-smoke VACE matrix —
 # wan-1.3b-vace (regression guard), wan-14b-vace-gguf (gguf resolver base-cache
 # path), and wan-14b-vace (full 14B). disk_gb sizes the container for the
@@ -54,20 +53,22 @@ ROLES = {
     "vace": {
         "gpus": ["NVIDIA GeForce RTX 3090", "NVIDIA GeForce RTX 4090"],
         "disk_gb": 200,
-        "min_ram_gb": 48,
-        # TODO(gpu-run): see SPEND_CAP_USD note above — 3.5 h likely too tight
-        # for ~130 GB downloads + two offloaded 14B smokes; propose ~6 h and
-        # re-confirm with the user before launching.
-        "wall_cap_h": 3.5,
+        # 64 GB RAM: sequential offload keeps the full 14B's weights resident
+        # in system RAM (bf16 transformer ~28 GB + UMT5 ~11 GB + VAE +
+        # overhead ≈ 42-48 GB peak) — 48 GB was an OOM-kill risk.
+        "min_ram_gb": 64,
+        # 6 h wall: measured 1.3B smoke 7-26 min + est. 30-60 min downloads
+        # + two untested 14B smokes under offload (est. 25-60 min each).
+        "wall_cap_h": 6.0,
     },
 }
 
 POLL_S = 30
 PROVISION_TIMEOUT_S = 15 * 60
-# TODO(gpu-run): the pod heartbeat only ticks while console.log is being
-# written. A 75 GB shard-load under offload can go silent for long stretches —
-# if the 14B smokes stall-trip this guard on a live pod, raise toward 30 min.
-HEARTBEAT_STALL_S = 15 * 60
+# 30 min: the heartbeat only ticks while console.log is being written, and
+# the untested 75 GB 14B shard-load under offload can go legitimately silent
+# for longer than the old 15 min threshold.
+HEARTBEAT_STALL_S = 30 * 60
 
 
 def is_stalled(last_beat_change_ts: float, now: float, threshold: float) -> bool:
@@ -227,12 +228,7 @@ def launch(role: str) -> str:
         f"git clone --depth 1 -b {BRANCH} {REPO_URL} repo && "
         "bash repo/runpod-validation/pod_bootstrap.sh'"
     )
-    # Inline literal mutation (verified working pattern); json.dumps handles
-    # GraphQL string escaping for the dockerArgs value.
-    mutation = f"""
-    mutation {{
-      podRentInterruptable(input: {{
-        bidPerGpu: {bid}
+    common_fields = f"""
         cloudType: COMMUNITY
         gpuCount: 1
         gpuTypeId: {json.dumps(gpu)}
@@ -243,12 +239,35 @@ def launch(role: str) -> str:
         minMemoryInGb: {cfg["min_ram_gb"]}
         dockerArgs: {json.dumps(docker_args)}
         ports: "8000/http"
-      }}) {{ id costPerHr }}
-    }}"""
-    # retries=1: if the response is lost after the rent lands, a retry would
-    # silently rent a second (untracked, unguarded) pod.
-    pod = gql(mutation, retries=1)["podRentInterruptable"]
-    print(f"launched pod {pod['id']} ({gpu}, bid ${bid}/hr, "
+    """
+    # On-demand first: a spot reclaim mid-run restarts the whole ~118 GB
+    # download from scratch (a 2026-07-04 spot pod was reclaimed during
+    # provisioning). On-demand often costs the same as our 1.4x spot bid.
+    # retries=1 on both: if the response is lost after the rent lands, a retry
+    # would silently rent a second (untracked, unguarded) pod.
+    try:
+        mutation = f"""
+        mutation {{
+          podFindAndDeployOnDemand(input: {{
+            {common_fields}
+          }}) {{ id costPerHr }}
+        }}"""
+        pod = gql(mutation, retries=1)["podFindAndDeployOnDemand"]
+        kind = "on-demand"
+    except RuntimeError as exc:
+        print(f"on-demand rent unavailable ({exc}); falling back to spot bid ${bid}/hr")
+        mutation = f"""
+        mutation {{
+          podRentInterruptable(input: {{
+            bidPerGpu: {bid}
+            {common_fields}
+          }}) {{ id costPerHr }}
+        }}"""
+        pod = gql(mutation, retries=1)["podRentInterruptable"]
+        kind = f"spot bid ${bid}/hr"
+    if pod is None:
+        raise RuntimeError(f"pod rent returned null for {gpu} — no capacity at request")
+    print(f"launched pod {pod['id']} ({gpu}, {kind}, "
           f"costPerHr ${pod.get('costPerHr')})")
     state = _state()
     state["pods"][pod["id"]] = {
@@ -307,6 +326,11 @@ def fetch_evidence(pod_id: str, role: str) -> None:
             "evidence/smoke/vace.json",
             "evidence/smoke/vace-14b-gguf.json",
             "evidence/smoke/vace-14b.json",
+            # Videos too: on a salvage (wall/spend/stall) the completed smokes'
+            # outputs are the judgment evidence — don't leave them on the pod.
+            "evidence/smoke/vace/wan-1.3b-vace/result.mp4",
+            "evidence/smoke/vace-14b-gguf/wan-14b-vace-gguf/result.mp4",
+            "evidence/smoke/vace-14b/wan-14b-vace/result.mp4",
         ]
     got = 0
     for path in dict.fromkeys(paths):  # dedupe, keep order

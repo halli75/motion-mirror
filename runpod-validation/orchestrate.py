@@ -199,74 +199,85 @@ def preflight() -> None:
 # ---------------------------------------------------------------- pod launch
 
 
-def _pick_gpu(role_cfg: dict) -> tuple[str, float]:
+def _gpu_candidates(role_cfg: dict) -> list[tuple[str, float]]:
+    """All configured GPUs with any stock, preferred order, with spot bids."""
     info = gql(
         """query { gpuTypes { id
              lowestPrice(input:{gpuCount:1}) { minimumBidPrice stockStatus } } }"""
     )["gpuTypes"]
     by_id = {g["id"]: g.get("lowestPrice") or {} for g in info}
-    for gpu in role_cfg["gpus"]:
-        lp = by_id.get(gpu, {})
-        if lp.get("stockStatus") == "High" and lp.get("minimumBidPrice"):
-            bid = round(float(lp["minimumBidPrice"]) * 1.4, 3)
-            return gpu, bid
-    # fall back to first GPU with any stock rather than none
+    out = []
     for gpu in role_cfg["gpus"]:
         lp = by_id.get(gpu, {})
         if lp.get("stockStatus") in ("High", "Low") and lp.get("minimumBidPrice"):
-            bid = round(float(lp["minimumBidPrice"]) * 1.4, 3)
-            print(f"WARNING: {gpu} stock is {lp['stockStatus']} — provisioning may hang")
-            return gpu, bid
-    raise RuntimeError(f"no stock for any of {role_cfg['gpus']}")
+            out.append((gpu, round(float(lp["minimumBidPrice"]) * 1.4, 3)))
+    if not out:
+        raise RuntimeError(f"no stock for any of {role_cfg['gpus']}")
+    return out
+
+
+def _try_rent(mutation: str, field: str) -> dict | None:
+    """One rent attempt; None on a capacity error, raise on anything else.
+
+    retries=1: if the response is lost after the rent lands, a retry would
+    silently rent a second (untracked, unguarded) pod.
+    """
+    try:
+        return gql(mutation, retries=1)[field]
+    except RuntimeError as exc:
+        if "no longer any instances" in str(exc) or "SUPPLY_CONSTRAINT" in str(exc):
+            return None
+        raise
 
 
 def launch(role: str) -> str:
     cfg = ROLES[role]
-    gpu, bid = _pick_gpu(cfg)
     docker_args = (
         "bash -lc 'cd /workspace && "
         f"git clone --depth 1 -b {BRANCH} {REPO_URL} repo && "
         "bash repo/runpod-validation/pod_bootstrap.sh'"
     )
-    common_fields = f"""
-        cloudType: COMMUNITY
-        gpuCount: 1
-        gpuTypeId: {json.dumps(gpu)}
-        imageName: {json.dumps(IMAGE)}
-        name: {json.dumps(f"mm-v02a-validate-{role}")}
-        containerDiskInGb: {cfg["disk_gb"]}
-        volumeInGb: 0
-        minMemoryInGb: {cfg["min_ram_gb"]}
-        dockerArgs: {json.dumps(docker_args)}
-        ports: "8000/http"
-    """
-    # On-demand first: a spot reclaim mid-run restarts the whole ~118 GB
-    # download from scratch (a 2026-07-04 spot pod was reclaimed during
-    # provisioning). On-demand often costs the same as our 1.4x spot bid.
-    # retries=1 on both: if the response is lost after the rent lands, a retry
-    # would silently rent a second (untracked, unguarded) pod.
-    try:
-        mutation = f"""
-        mutation {{
-          podFindAndDeployOnDemand(input: {{
-            {common_fields}
-          }}) {{ id costPerHr }}
-        }}"""
-        pod = gql(mutation, retries=1)["podFindAndDeployOnDemand"]
+    # The stock API reports GPU-level availability, but our RAM/disk filters
+    # can exhaust a pool that looks "High" — so iterate every candidate GPU,
+    # trying on-demand first (a spot reclaim mid-run restarts the whole
+    # ~118 GB download; on-demand often costs the same as our 1.4x spot bid),
+    # then spot, before giving up.
+    pod = None
+    for gpu, bid in _gpu_candidates(cfg):
+        common_fields = f"""
+            cloudType: COMMUNITY
+            gpuCount: 1
+            gpuTypeId: {json.dumps(gpu)}
+            imageName: {json.dumps(IMAGE)}
+            name: {json.dumps(f"mm-v02a-validate-{role}")}
+            containerDiskInGb: {cfg["disk_gb"]}
+            volumeInGb: 0
+            minMemoryInGb: {cfg["min_ram_gb"]}
+            dockerArgs: {json.dumps(docker_args)}
+            ports: "8000/http"
+        """
+        pod = _try_rent(
+            f"mutation {{ podFindAndDeployOnDemand(input: {{ {common_fields} }}) "
+            f"{{ id costPerHr }} }}",
+            "podFindAndDeployOnDemand",
+        )
         kind = "on-demand"
-    except RuntimeError as exc:
-        print(f"on-demand rent unavailable ({exc}); falling back to spot bid ${bid}/hr")
-        mutation = f"""
-        mutation {{
-          podRentInterruptable(input: {{
-            bidPerGpu: {bid}
-            {common_fields}
-          }}) {{ id costPerHr }}
-        }}"""
-        pod = gql(mutation, retries=1)["podRentInterruptable"]
-        kind = f"spot bid ${bid}/hr"
+        if pod is None:
+            print(f"{gpu}: no on-demand capacity; trying spot bid ${bid}/hr")
+            pod = _try_rent(
+                f"mutation {{ podRentInterruptable(input: {{ bidPerGpu: {bid} "
+                f"{common_fields} }}) {{ id costPerHr }} }}",
+                "podRentInterruptable",
+            )
+            kind = f"spot bid ${bid}/hr"
+        if pod is not None:
+            break
+        print(f"{gpu}: no spot capacity either; trying next GPU")
     if pod is None:
-        raise RuntimeError(f"pod rent returned null for {gpu} — no capacity at request")
+        raise RuntimeError(
+            f"no capacity for any of {cfg['gpus']} with "
+            f"{cfg['min_ram_gb']} GB RAM / {cfg['disk_gb']} GB disk — retry later"
+        )
     print(f"launched pod {pod['id']} ({gpu}, {kind}, "
           f"costPerHr ${pod.get('costPerHr')})")
     state = _state()

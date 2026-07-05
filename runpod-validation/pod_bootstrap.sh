@@ -101,6 +101,15 @@ if ! python3 -m pip install -e "${REPO}[$EXTRAS]"; then
   record_failure "pip install extras=$EXTRAS"
   finish aborted-pip-install
 fi
+# Pin the ML stack to the last-known-good set (pip-freeze of the 2026-07-04
+# passing pod, plus the gguf version verified current at prep time). An
+# unpinned "latest diffusers" on rent day is exactly the kind of churn that
+# breaks WanVACE/GGUF loading mid-run and wastes the pod.
+if ! python3 -m pip install "diffusers==0.39.0" "transformers==5.13.0" \
+    "accelerate==1.14.0" "gguf==0.19.0"; then
+  record_failure "pip pin known-good ML stack"
+  finish aborted-pip-install
+fi
 if ! python3 -c "import torch; assert torch.cuda.is_available(), 'CUDA gone after installs'"; then
   record_failure "torch CUDA sanity check failed after pip installs"
   finish aborted-cuda-sanity

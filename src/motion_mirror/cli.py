@@ -98,25 +98,55 @@ _MODEL_SPECS: dict[str, dict] = {
     "wan-1.3b-vace": {
         "repo_id": "Wan-AI/Wan2.1-VACE-1.3B-diffusers",
         "filename": None,
-        "expected_bytes": 5_000_000_000,
+        "expected_bytes": 19_000_000_000,
         "min_cached_bytes": 3_000_000_000,
         "cache_subdir": "wan-1.3b-vace",
-        "label": "Wan2.1-VACE-1.3B (lightweight, ~5 GB, needs ~9 GB VRAM) [backend: wan-1.3b-vace]",
+        "label": "Wan2.1-VACE-1.3B (lightweight, ~19 GB download, needs ~9 GB VRAM) [backend: wan-1.3b-vace]",
     },
     "sam2": {
         "repo_id": "facebook/sam2-hiera-large",
         "filename": None,
-        "expected_bytes": 900_000_000,
+        "expected_bytes": 1_800_000_000,
         "min_cached_bytes": 500_000_000,
         "cache_subdir": "sam2",
-        "label": "SAM-2 Large segmenter (~900 MB) [--segmenter sam2]",
+        "label": "SAM-2 Large image segmenter (~1.8 GB) [--segmenter sam2]",
+    },
+    "wan-14b-vace": {
+        "repo_id": "Wan-AI/Wan2.1-VACE-14B-diffusers",
+        "filename": None,
+        "expected_bytes": 76_000_000_000,
+        "min_cached_bytes": 60_000_000_000,
+        "cache_subdir": "wan-14b-vace",
+        "label": "Wan2.1-VACE-14B full (~75 GB, GPU-unvalidated, explicit --backend only) [backend: wan-14b-vace]",
+    },
+    "wan-14b-vace-gguf": {
+        "repo_id": "QuantStack/Wan2.1_14B_VACE-GGUF",
+        "filename": "Wan2.1_14B_VACE-Q4_K_M.gguf",
+        "expected_bytes": 11_600_000_000,
+        "cache_subdir": "wan-14b-vace-gguf",
+        "label": "Wan2.1-VACE-14B Q4_K_M GGUF transformer (~11.6 GB) [backend: wan-14b-vace-gguf]",
+    },
+    "wan-14b-vace-base": {
+        "repo_id": "Wan-AI/Wan2.1-VACE-14B-diffusers",
+        "filename": None,
+        "expected_bytes": 12_000_000_000,
+        "min_cached_bytes": 9_000_000_000,
+        "cache_subdir": "wan-14b-vace-base",
+        "allow_patterns": ["vae/*", "text_encoder/*", "tokenizer/*", "scheduler/*", "model_index.json"],
+        "label": "Wan2.1-VACE-14B base components sans transformer (~12 GB, for the GGUF backend)",
     },
 }
 
 _MODEL_GROUPS = {
     "dwpose": ["dwpose-pose", "dwpose-det"],
     "vace": ["wan-1.3b-vace"],
+    "vace-14b": ["wan-14b-vace"],
+    "vace-14b-gguf": ["wan-14b-vace-gguf", "wan-14b-vace-base"],
     "extras": ["sam2"],
+    # "all" is deliberately the validated ~6 GB lineup only. The 14B backends
+    # (~75 GB full, ~24 GB GGUF+base) are GPU-unvalidated and must be requested
+    # explicitly via their own model/group keys - growing "all" to ~130 GB
+    # silently would be hostile.
     "all": [
         "dwpose-pose",
         "dwpose-det",
@@ -130,7 +160,7 @@ _MODEL_GROUPS = {
 def run(
     image: Path = typer.Argument(..., help="Character image path (PNG/JPG/WEBP)."),
     motion: Path = typer.Argument(..., help="Reference motion video path (MP4/MOV/AVI/MKV)."),
-    backend: Optional[str] = typer.Option(None, help="Backend: auto | wan-1.3b-vace | mock."),
+    backend: Optional[str] = typer.Option(None, help="Backend: auto | wan-1.3b-vace | wan-14b-vace | wan-14b-vace-gguf | mock (14B backends GPU-unvalidated)."),
     resolution: Optional[str] = typer.Option(None, help="Output resolution WxH, e.g. 832x480."),
     frames: Optional[int] = typer.Option(None, help="Number of output frames."),
     density: Optional[int] = typer.Option(None, help="Trajectory density (512 = default, 1024 = HQ)."),
@@ -141,7 +171,6 @@ def run(
     t5_cpu: bool = typer.Option(False, "--t5-cpu", help="Keep T5 text encoder on CPU (~12 GB VRAM saved)."),
     flow_estimator: Optional[str] = typer.Option(None, "--flow-estimator", help="Optical flow backend: farneback | raft."),
     segmenter: Optional[str] = typer.Option(None, "--segmenter", help="Segmentation model: rembg | sam2."),
-    reference_masker: Optional[str] = typer.Option(None, "--reference-masker", help="Reference-video masking: pose | sam2."),
     auto: bool = typer.Option(False, "--auto", help="Auto-select backend from available VRAM."),
 ) -> None:
     """Run the full motion transfer pipeline."""
@@ -161,8 +190,6 @@ def run(
             cfg_kwargs["flow_estimator"] = preset_data["flow_estimator"]
         if "segmenter" in preset_data:
             cfg_kwargs["segmenter"] = preset_data["segmenter"]
-        if "reference_masker" in preset_data:
-            cfg_kwargs["reference_masker"] = preset_data["reference_masker"]
 
     if auto:
         cfg_kwargs["backend"] = "auto"
@@ -187,8 +214,6 @@ def run(
         cfg_kwargs["flow_estimator"] = flow_estimator
     if segmenter is not None:
         cfg_kwargs["segmenter"] = segmenter
-    if reference_masker is not None:
-        cfg_kwargs["reference_masker"] = reference_masker
 
     cfg = MotionMirrorConfig(**cfg_kwargs)
 
@@ -215,8 +240,11 @@ def download(
     model: str = typer.Option(
         "all",
         help=(
-            "Model(s) to download: all | dwpose | vace | extras | "
-            "wan-1.3b-vace | sam2 | dwpose-pose | dwpose-det."
+            "Model(s) to download: all | dwpose | vace | vace-14b | "
+            "vace-14b-gguf | extras | wan-1.3b-vace | wan-14b-vace | "
+            "wan-14b-vace-gguf | wan-14b-vace-base | sam2 | dwpose-pose | "
+            "dwpose-det. NOTE: 'all' is the validated ~6 GB lineup only; the "
+            "~75 GB / ~24 GB 14B backends must be requested explicitly."
         ),
     ),
     cache_dir: Optional[Path] = typer.Option(None, help="Override default cache directory."),
@@ -286,6 +314,7 @@ def download(
                 snapshot_download(
                     repo_id=spec["repo_id"],
                     local_dir=str(dest_dir),
+                    allow_patterns=spec.get("allow_patterns"),
                 )
                 console.print(f"  [green]ok[/green] Saved to {dest_dir}")
             except Exception as exc:

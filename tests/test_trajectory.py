@@ -23,10 +23,9 @@ from motion_mirror.extract.trajectory import (
     _layer1_skeleton_tracks,
     _layer2_interpolated_tracks,
     _layer3_flow_tracks,
-    _select_video_body_mask,
 )
 from motion_mirror.extract.trajectory import synthesize_trajectory
-from motion_mirror.types import PoseSequence, ReferenceMaskResult, SegmentationResult, TrajectoryMap
+from motion_mirror.types import PoseSequence, SegmentationResult, TrajectoryMap
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -369,29 +368,6 @@ def test_nonrigid_mask_excludes_body_core():
     nr = _build_nonrigid_mask(mask)
     # Centre pixel of body should be 0 (excluded)
     assert nr[64, 64] == 0
-
-
-def test_reference_masks_override_pose_body_mask_for_video_space():
-    keypoints = np.zeros((133, 3), dtype=np.float32)
-    masks = np.zeros((2, 8, 8), dtype=np.uint8)
-    masks[:, 0:2, 0:2] = 255
-    reference_masks = ReferenceMaskResult(
-        source_video_path=Path("motion.mp4"),
-        mask_video_path=None,
-        masks=masks,
-        frame_size=(8, 8),
-        fps=16.0,
-    )
-
-    selected = _select_video_body_mask(
-        keypoints,
-        frame_hw=(8, 8),
-        num_frames=2,
-        reference_masks=reference_masks,
-    )
-
-    assert selected[0, 0] == 255
-    assert selected[4, 4] == 0
 
 
 # ── Edge cases ────────────────────────────────────────────────────────────────

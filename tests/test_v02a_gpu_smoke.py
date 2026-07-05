@@ -26,7 +26,6 @@ def test_build_config_uses_supported_motion_mirror_config_fields(tmp_path):
         backend="wan-1.3b-vace",
         output_dir=tmp_path / "smoke" / "vace",
         cache_dir=tmp_path / "cache",
-        reference_masker="pose",
         resolution="832x480",
         frames=17,
         density=256,

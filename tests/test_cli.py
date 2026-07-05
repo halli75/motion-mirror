@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
-from motion_mirror.cli import _MODEL_SPECS, _is_spec_cached, app
+from motion_mirror.cli import _MODEL_GROUPS, _MODEL_SPECS, _is_spec_cached, app
 
 runner = CliRunner()
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -68,7 +68,6 @@ def test_run_help_documents_v02a_public_surface():
         "--t5-cpu",
         "--flow-estimator",
         "--segmenter",
-        "--reference-masker",
     ):
         assert text in out
 
@@ -90,8 +89,99 @@ def test_download_cache_rejects_tiny_partial_snapshot(tmp_path):
 
 def test_vace_spec_counts_snapshot():
     spec = _MODEL_SPECS["wan-1.3b-vace"]
-    assert spec["expected_bytes"] == 5_000_000_000
+    assert spec["expected_bytes"] == 19_000_000_000
     assert spec["min_cached_bytes"] == 3_000_000_000
+
+
+# ── Phase 2: 14B VACE spec shape ────────────────────────────────────────────────
+
+def test_wan_14b_vace_spec_shape():
+    spec = _MODEL_SPECS["wan-14b-vace"]
+    assert spec["repo_id"] == "Wan-AI/Wan2.1-VACE-14B-diffusers"
+    assert spec["filename"] is None
+    assert spec["expected_bytes"] == 76_000_000_000
+    assert spec["min_cached_bytes"] == 60_000_000_000
+    assert spec["cache_subdir"] == "wan-14b-vace"
+    assert "allow_patterns" not in spec
+
+
+def test_wan_14b_vace_gguf_spec_shape():
+    spec = _MODEL_SPECS["wan-14b-vace-gguf"]
+    assert spec["repo_id"] == "QuantStack/Wan2.1_14B_VACE-GGUF"
+    assert spec["filename"] == "Wan2.1_14B_VACE-Q4_K_M.gguf"
+    assert spec["expected_bytes"] == 11_600_000_000
+    assert spec["cache_subdir"] == "wan-14b-vace-gguf"
+
+
+def test_wan_14b_vace_base_spec_shape():
+    spec = _MODEL_SPECS["wan-14b-vace-base"]
+    assert spec["repo_id"] == "Wan-AI/Wan2.1-VACE-14B-diffusers"
+    assert spec["filename"] is None
+    assert spec["expected_bytes"] == 12_000_000_000
+    assert spec["min_cached_bytes"] == 9_000_000_000
+    assert spec["cache_subdir"] == "wan-14b-vace-base"
+    # model_index.json MUST stay in allow_patterns - the generate-side resolver's
+    # completeness check keys on it.
+    assert "model_index.json" in spec["allow_patterns"]
+
+
+def test_download_snapshot_passes_allow_patterns(tmp_path):
+    spec = _MODEL_SPECS["wan-14b-vace-base"]
+    fake_usage = SimpleNamespace(free=10 ** 15)  # plenty of free space
+    with patch("huggingface_hub.snapshot_download") as mock_snapshot, \
+            patch("huggingface_hub.hf_hub_download"), \
+            patch("motion_mirror.cli.shutil.disk_usage", return_value=fake_usage):
+        result = runner.invoke(app, [
+            "download", "--model", "wan-14b-vace-base",
+            "--cache-dir", str(tmp_path / "cache"),
+        ])
+    assert result.exit_code == 0, result.output
+    mock_snapshot.assert_called_once()
+    _, kwargs = mock_snapshot.call_args
+    assert kwargs["allow_patterns"] == spec["allow_patterns"]
+
+
+def test_full_snapshot_passes_none_allow_patterns(tmp_path):
+    fake_usage = SimpleNamespace(free=10 ** 15)
+    with patch("huggingface_hub.snapshot_download") as mock_snapshot, \
+            patch("huggingface_hub.hf_hub_download"), \
+            patch("motion_mirror.cli.shutil.disk_usage", return_value=fake_usage):
+        result = runner.invoke(app, [
+            "download", "--model", "wan-14b-vace",
+            "--cache-dir", str(tmp_path / "cache"),
+        ])
+    assert result.exit_code == 0, result.output
+    mock_snapshot.assert_called_once()
+    _, kwargs = mock_snapshot.call_args
+    assert kwargs["allow_patterns"] is None
+
+
+# ── Phase 2: model groups ───────────────────────────────────────────────────────
+
+def test_vace_14b_group_exact_members():
+    assert _MODEL_GROUPS["vace-14b"] == ["wan-14b-vace"]
+
+
+def test_vace_14b_gguf_group_exact_members():
+    assert _MODEL_GROUPS["vace-14b-gguf"] == ["wan-14b-vace-gguf", "wan-14b-vace-base"]
+
+
+def test_all_group_unchanged():
+    # "all" must stay the validated ~6 GB lineup - the 4 validated specs only.
+    assert _MODEL_GROUPS["all"] == [
+        "dwpose-pose",
+        "dwpose-det",
+        "wan-1.3b-vace",
+        "sam2",
+    ]
+
+
+def test_run_help_lists_14b_backends():
+    result = runner.invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    out = _plain(result.output)
+    assert "wan-14b-vace" in out
+    assert "wan-14b-vace-gguf" in out
 
 
 def test_download_preflight_rejects_free_space_within_margin(tmp_path):

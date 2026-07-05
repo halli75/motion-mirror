@@ -49,6 +49,33 @@ def test_create_app_has_video_output():
     assert len(videos) >= 1, "No Video component found in Blocks"
 
 
+def _find_backend_dropdown(demo):
+    for c in demo.blocks.values():
+        if isinstance(c, gr.Dropdown) and c.label == "Backend":
+            return c
+    raise AssertionError("Backend dropdown not found in Blocks")
+
+
+def test_backend_dropdown_matches_backend_names():
+    """The Backend dropdown must offer exactly the config BackendName options."""
+    from typing import get_args
+
+    from motion_mirror.config import BackendName
+
+    demo = create_app()
+    dd = _find_backend_dropdown(demo)
+    # Gradio may store choices as (label, value) tuples across versions.
+    choices = [c[1] if isinstance(c, tuple) else c for c in dd.choices]
+    assert set(choices) == set(get_args(BackendName))
+    assert choices == [
+        "auto",
+        "wan-1.3b-vace",
+        "wan-14b-vace",
+        "wan-14b-vace-gguf",
+        "mock",
+    ]
+
+
 def _find_frames_slider(demo):
     for c in demo.blocks.values():
         if isinstance(c, gr.Slider) and c.label == "Frames":

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "motion-mirror"
-version = "0.3.0a0"
+version = "0.4.0a0"
 description = "Local-first motion transfer pipeline for animating a character image from a reference video."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -39,7 +39,9 @@ cpu = [
 # Note: sam2 must be installed from GitHub: pip install git+https://github.com/facebookresearch/sam2.git
 # RAFT weights are auto-downloaded by torchvision — no extra package needed.
 gpu-inference = [
-  "diffusers>=0.33",
+  # >=0.35.0: first release with WanVACETransformer3DModel in SINGLE_FILE_LOADABLE_CLASSES (GGUF single-file loading)
+  "diffusers>=0.35.0",
+  "gguf>=0.10.0",  # required by diffusers GGUFQuantizationConfig
   "transformers",
   "accelerate",
   "ftfy",
@@ -64,5 +66,6 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
   "gpu: marks tests requiring a CUDA GPU (deselect with -m 'not gpu')",
+  "network: marks tests that hit the live Hugging Face API (run with -m network)",
   "slow: marks tests that take more than 30 seconds",
 ]

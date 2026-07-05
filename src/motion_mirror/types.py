@@ -21,21 +21,6 @@ class SegmentationResult:
 
 
 @dataclass(slots=True)
-class ReferenceMaskResult:
-    """Output of reference-video mask propagation.
-
-    masks — (F, H, W) uint8, 0 = background, 255 = foreground subject
-    frame_size — (W, H) of mask frames
-    """
-
-    source_video_path: Path
-    mask_video_path: Path | None
-    masks: np.ndarray
-    frame_size: tuple[int, int]
-    fps: float
-
-
-@dataclass(slots=True)
 class PoseSequence:
     """Output of extract_pose().
 

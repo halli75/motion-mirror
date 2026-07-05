@@ -3,9 +3,14 @@
 #   cd /workspace && git clone -b runpod-v02a-validation <repo> repo \
 #     && bash repo/runpod-validation/pod_bootstrap.sh
 #
-# VACE-only lineup (v0.3): validates the wan-1.3b-vace backend on a 24 GB-class
-# GPU with the pose reference-masker (vace smoke) and the SAM-2 reference-masker
-# (sam2-vace smoke).
+# VACE lineup (Phase 2): a 3-smoke matrix on a large-disk GPU pod. Order is
+# load-bearing — downloads are interleaved with smokes:
+#   (1) dwpose + vace  -> smoke wan-1.3b-vace       (pose-conditioned regression
+#       guard on the already-validated backend);
+#   (2) vace-14b-gguf  -> smoke wan-14b-vace-gguf   (run BEFORE the full 14B
+#       download so the gguf resolver falls back to the base cache — the full
+#       transformer cache does NOT exist yet, so this covers that resolver path);
+#   (3) vace-14b       -> smoke wan-14b-vace        (full 14B).
 #
 # No SSH: evidence is served by python http.server on :8000 and fetched by
 # the local orchestrator through the RunPod proxy. The pod stays alive after
@@ -96,10 +101,6 @@ if ! python3 -m pip install -e "${REPO}[$EXTRAS]"; then
   record_failure "pip install extras=$EXTRAS"
   finish aborted-pip-install
 fi
-# SAM-2 reference-masker (sam2-vace smoke): no PyPI package, install from
-# GitHub. Best-effort — the sam2-vace smoke is skipped if this fails.
-python3 -m pip install "git+https://github.com/facebookresearch/sam2.git" \
-  || record_failure "pip install sam2"
 if ! python3 -c "import torch; assert torch.cuda.is_available(), 'CUDA gone after installs'"; then
   record_failure "torch CUDA sanity check failed after pip installs"
   finish aborted-cuda-sanity
@@ -161,14 +162,23 @@ then
   finish aborted-samples
 fi
 
-# --- phase: model downloads (per group; failure skips dependent backends) ---
+# --- model downloads + smoke matrix (interleaved; failure skips dependents) ---
 # NB: do not name this GROUPS — bash's special GROUPS array silently ignores
 # assignments, which turns the loop variable into a group id.
-# vace = wan-1.3b-vace weights; extras = SAM-2 (for the sam2-vace smoke).
-MM_GROUPS="dwpose vace extras"
-for g in $MM_GROUPS; do
+# Ordered download set (canonical list for the run):
+#   dwpose         = pose extractor;   vace = wan-1.3b-vace weights;
+#   vace-14b-gguf  = wan-14b-vace-gguf (~11.6 GB) + wan-14b-vace-base (~12 GB);
+#   vace-14b       = wan-14b-vace full transformer (~75 GB).
+# Downloads are NOT done all-up-front: the full 14B (vace-14b) is fetched only
+# AFTER the gguf smoke, so that smoke exercises the gguf resolver's base-cache
+# fallback while the full transformer cache is still absent. The order is the
+# explicit download_group/run_smoke call sequence below — there is no list
+# variable to edit.
+echo "download+smoke matrix: dwpose+vace -> smoke vace -> vace-14b-gguf -> smoke gguf -> vace-14b -> smoke 14b"
+
+download_group() { # download_group <group>
+  local g=$1 ok=false
   set_status "download-$g" false
-  ok=false
   for attempt in 1 2; do
     if motion-mirror download --model "$g" --cache-dir $WS/mm-cache; then
       ok=true; break
@@ -177,7 +187,7 @@ for g in $MM_GROUPS; do
     sleep 10
   done
   $ok || record_failure "download-$g"
-done
+}
 
 group_ok() { ! grep -qx "download-$1" $WS/status/failures.txt 2>/dev/null; }
 
@@ -194,17 +204,30 @@ run_smoke() { # run_smoke <name> <backend> [extra args...]
     "$@" || record_failure "smoke-$name"
 }
 
-# --- phase: smoke matrix (VACE-only) ---
+# (1) regression guard: 1.3B VACE on the already-validated backend.
+download_group dwpose
+download_group vace
 if group_ok dwpose && group_ok vace; then
   run_smoke vace wan-1.3b-vace
 else
   record_failure "skip smoke-vace (missing models)"
 fi
 
-if group_ok dwpose && group_ok vace && group_ok extras; then
-  run_smoke sam2-vace wan-1.3b-vace --reference-masker sam2
+# (2) gguf 14B BEFORE the full 14B download — the full transformer cache does
+#     not exist yet, so this covers the gguf resolver's base-cache fallback.
+download_group vace-14b-gguf
+if group_ok dwpose && group_ok vace-14b-gguf; then
+  run_smoke vace-14b-gguf wan-14b-vace-gguf
 else
-  record_failure "skip smoke-sam2-vace (missing models)"
+  record_failure "skip smoke-vace-14b-gguf (missing models)"
+fi
+
+# (3) full 14B VACE.
+download_group vace-14b
+if group_ok dwpose && group_ok vace-14b; then
+  run_smoke vace-14b wan-14b-vace
+else
+  record_failure "skip smoke-vace-14b (missing models)"
 fi
 
 finish "done"

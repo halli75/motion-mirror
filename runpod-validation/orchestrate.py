@@ -40,11 +40,12 @@ BRANCH = "runpod-v02a-validation"
 REPO_URL = "https://github.com/halli75/motion-mirror.git"
 IMAGE = "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
 
-# Caps sized 2026-07-04 for the Phase 2 matrix (~118 GB downloads + two 14B
-# smokes under offload). SPEND_CAP is set BELOW the account balance (~$4.19)
-# so our guard fires before RunPod force-kills pods at $0 balance and evidence
-# is salvaged first.
-SPEND_CAP_USD = 3.75
+# Caps sized 2026-07-05 for the Phase 2 matrix (~118 GB downloads + two 14B
+# smokes under offload). The cap is PER-RUN (run() baselines our_spend at
+# start) and sits below the account balance (~$3.84) so our guard fires and
+# salvages evidence before RunPod force-kills pods at $0 balance.
+# 6 h on the 4090 on-demand = $2.04; the cap leaves room for one retry pod.
+SPEND_CAP_USD = 3.00
 # Phase 2 lineup: a single large-disk pod runs the 3-smoke VACE matrix —
 # wan-1.3b-vace (regression guard), wan-14b-vace-gguf (gguf resolver base-cache
 # path), and wan-14b-vace (full 14B). disk_gb sizes the container for the
@@ -392,15 +393,20 @@ def run(role: str, attach_pod_id: str | None = None) -> int:
         started = (
             _state()["pods"][pod_id]["launched_at"] if attach_pod_id else time.time()
         )
+        spend_baseline = our_spend(_state())
         first_beat: float | None = None
         last_beat_change: float = time.time()
         last_beat_value: bytes | None = None
         last_phase = ""
+        null_runtime_polls = 0
         while True:
             time.sleep(POLL_S)
             now = time.time()
             state = _state()
-            spent = our_spend(state)
+            # Guard THIS run's spend, not the state file's whole history —
+            # prior sessions' pods are already paid for and counting them
+            # here starves fresh runs of budget.
+            spent = our_spend(state) - spend_baseline
             if spent >= SPEND_CAP_USD:
                 print(f"SPEND GUARD: ${spent:.2f} >= ${SPEND_CAP_USD} — salvage + stop")
                 fetch_evidence(pod_id, role)
@@ -413,8 +419,24 @@ def run(role: str, attach_pod_id: str | None = None) -> int:
             pod = pod_status(pod_id)
             runtime_up = bool(pod and pod.get("runtime"))
             if not runtime_up:
+                # The API transiently returns runtime:null on healthy pods
+                # (observed 2026-07-05 on an on-demand pod mid-smoke — one
+                # null poll caused a false reclaim and killed a live run).
+                # The pod's own proxy is the ground truth: if it still
+                # answers, the pod is alive. Only declare it dropped after
+                # 3 consecutive polls where the API says null AND the proxy
+                # is dead.
+                proxy_alive = proxy_fetch(pod_id, "status/heartbeat", timeout=15) is not None
+                if proxy_alive:
+                    null_runtime_polls = 0
+                    print("API reports runtime null but proxy is alive — ignoring")
+                    continue
+                null_runtime_polls += 1
                 if first_beat is not None:
-                    print("pod runtime dropped (spot reclaim?)")
+                    if null_runtime_polls < 3:
+                        print(f"runtime null + proxy dead ({null_runtime_polls}/3) — confirming")
+                        continue
+                    print("pod runtime dropped (confirmed x3)")
                     if not retried:
                         print("retrying once with a fresh pod")
                         terminate(pod_id)
@@ -422,6 +444,7 @@ def run(role: str, attach_pod_id: str | None = None) -> int:
                         pod_id = launch(role)
                         started, first_beat = time.time(), None
                         last_beat_value, last_beat_change = None, time.time()
+                        null_runtime_polls = 0
                         continue
                     print("already retried — giving up")
                     return 5
@@ -437,6 +460,7 @@ def run(role: str, attach_pod_id: str | None = None) -> int:
                     return 5
                 continue
 
+            null_runtime_polls = 0
             beat = proxy_fetch(pod_id, "status/heartbeat", timeout=15)
             if beat is not None:
                 if first_beat is None:
@@ -445,7 +469,7 @@ def run(role: str, attach_pod_id: str | None = None) -> int:
                 if beat != last_beat_value:
                     last_beat_value, last_beat_change = beat, now
             if first_beat is not None and is_stalled(last_beat_change, now, HEARTBEAT_STALL_S):
-                print("heartbeat stalled >15min — salvage + stop")
+                print(f"heartbeat stalled >{HEARTBEAT_STALL_S // 60}min — salvage + stop")
                 fetch_evidence(pod_id, role)
                 return 6
 

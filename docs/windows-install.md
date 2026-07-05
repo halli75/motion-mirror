@@ -26,7 +26,7 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install -e ".[cuda,gpu-inference]"
 ```
 
-Optional SAM-2 segmenter / reference-video masker:
+Optional SAM-2 character-image segmenter:
 
 ```powershell
 pip install git+https://github.com/facebookresearch/sam2.git
@@ -80,7 +80,16 @@ motion-mirror run character.png motion.mp4 `
   --output-dir outputs\vace-smoke
 ```
 
-Add `--segmenter sam2 --reference-masker sam2` to exercise the SAM-2 path.
+Add `--segmenter sam2` to exercise SAM-2 character-image segmentation.
+
+## 14B Backends (Optional, UNVALIDATED)
+
+Two larger backends also exist: `wan-14b-vace` and `wan-14b-vace-gguf`
+(Wan2.1-VACE-14B). They are **explicit-only** (`--auto` never selects them) and
+have **not** been GPU-validated by this project, so treat them as experimental.
+They require much larger downloads — `motion-mirror download --model vace-14b`
+(~75 GB) or `--model vace-14b-gguf` (~24 GB) — plus **≥24 GB system RAM** for T5
+CPU offload. Make sure the model cache drive has room before downloading.
 
 ## Troubleshooting
 

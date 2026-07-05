@@ -73,11 +73,6 @@ def test_invalid_segmenter_raises():
         MotionMirrorConfig(segmenter="magic")
 
 
-def test_invalid_reference_masker_raises():
-    with pytest.raises(ValueError, match="reference_masker"):
-        MotionMirrorConfig(reference_masker="nope")
-
-
 def test_invalid_flow_estimator_raises():
     with pytest.raises(ValueError, match="flow_estimator"):
         MotionMirrorConfig(flow_estimator="lucas-kanade")
@@ -87,6 +82,8 @@ def test_all_valid_backends_construct():
     for backend in (
         "auto",
         "wan-1.3b-vace",
+        "wan-14b-vace",
+        "wan-14b-vace-gguf",
         "mock",
     ):
         assert MotionMirrorConfig(backend=backend).backend == backend
@@ -97,8 +94,6 @@ def test_valid_optional_stage_values_construct():
         device="cpu",
         flow_estimator="raft",
         segmenter="sam2",
-        reference_masker="sam2",
     )
     assert c.flow_estimator == "raft"
     assert c.segmenter == "sam2"
-    assert c.reference_masker == "sam2"

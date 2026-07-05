@@ -1,6 +1,7 @@
 """Tests for the VACE generation backend."""
 from __future__ import annotations
 
+import re
 import sys
 import types
 from pathlib import Path
@@ -257,9 +258,31 @@ class FakeGenerator:
 
 
 class FakeAutoencoderKLWan:
+    last_kwargs: dict | None = None
+
     @classmethod
     def from_pretrained(cls, *args, **kwargs):
+        cls.last_kwargs = kwargs
         return object()
+
+
+class FakeGGUFQuantizationConfig:
+    last_instance = None
+
+    def __init__(self, compute_dtype=None):
+        self.compute_dtype = compute_dtype
+        FakeGGUFQuantizationConfig.last_instance = self
+
+
+class FakeWanVACETransformer3DModel:
+    last_args: tuple | None = None
+    last_kwargs: dict | None = None
+
+    @classmethod
+    def from_single_file(cls, *args, **kwargs):
+        cls.last_args = args
+        cls.last_kwargs = kwargs
+        return types.SimpleNamespace(_sentinel="fake-gguf-transformer")
 
 
 class FakeScheduler:
@@ -291,6 +314,7 @@ class FakePipe:
         self.device = None
         self.attention_slicing = None
         self.sequential_offload_called = False
+        self.model_cpu_offload_called = False
         FakePipe.last_instance = self
 
     @classmethod
@@ -305,6 +329,9 @@ class FakePipe:
 
     def enable_sequential_cpu_offload(self):
         self.sequential_offload_called = True
+
+    def enable_model_cpu_offload(self):
+        self.model_cpu_offload_called = True
 
     def to(self, device):
         self.device = device
@@ -331,6 +358,8 @@ def _fake_diffusers_modules(cuda_available: bool) -> dict[str, object]:
     fake_diffusers = types.ModuleType("diffusers")
     fake_diffusers.AutoencoderKLWan = FakeAutoencoderKLWan
     fake_diffusers.WanVACEPipeline = FakePipe
+    fake_diffusers.GGUFQuantizationConfig = FakeGGUFQuantizationConfig
+    fake_diffusers.WanVACETransformer3DModel = FakeWanVACETransformer3DModel
     fake_schedulers_pkg = types.ModuleType("diffusers.schedulers")
     fake_scheduler_module = types.ModuleType("diffusers.schedulers.scheduling_unipc_multistep")
     fake_scheduler_module.UniPCMultistepScheduler = FakeScheduler
@@ -339,10 +368,29 @@ def _fake_diffusers_modules(cuda_available: bool) -> dict[str, object]:
         "diffusers": fake_diffusers,
         "diffusers.schedulers": fake_schedulers_pkg,
         "diffusers.schedulers.scheduling_unipc_multistep": fake_scheduler_module,
+        # The gguf backend import-checks the gguf package up front.
+        "gguf": types.ModuleType("gguf"),
     }
 
 
-def _vace_pipeline_request(tmp_path: Path, **cfg_overrides) -> tuple[GenerationRequest, MotionMirrorConfig]:
+def _seed_model_index(cfg: MotionMirrorConfig, subdir: str) -> Path:
+    """Write a minimal diffusers model_index.json into a cache subdir."""
+    model_dir = cfg.model_cache(subdir)
+    (model_dir / "model_index.json").write_text("{}", encoding="utf-8")
+    return model_dir
+
+
+def _seed_gguf_transformer(cfg: MotionMirrorConfig, spec_subdir: str, filename: str) -> Path:
+    """Write a non-empty fake .gguf transformer file into a cache subdir."""
+    gguf_dir = cfg.model_cache(spec_subdir)
+    path = gguf_dir / filename
+    path.write_bytes(b"\x00" * 32)
+    return path
+
+
+def _vace_pipeline_request(
+    tmp_path: Path, *, backend: str = "wan-1.3b-vace", **cfg_overrides
+) -> tuple[GenerationRequest, MotionMirrorConfig]:
     seg = tmp_path / "seg.png"
     Image.new("RGBA", (48, 48), (255, 100, 10, 255)).save(seg)
     pose_video = tmp_path / "pose.mp4"
@@ -354,11 +402,19 @@ def _vace_pipeline_request(tmp_path: Path, **cfg_overrides) -> tuple[GenerationR
     cfg = MotionMirrorConfig(
         project_root=tmp_path,
         cache_dir=tmp_path / "cache",
-        backend="wan-1.3b-vace",
+        backend=backend,
         **cfg_overrides,
     )
-    model_dir = cfg.model_cache("wan-1.3b-vace")
-    (model_dir / "model_index.json").write_text("{}", encoding="utf-8")
+
+    # Seed whatever weights the chosen backend expects to find on disk.
+    if backend == "wan-14b-vace-gguf":
+        _seed_gguf_transformer(cfg, "wan-14b-vace-gguf", "Wan2.1_14B_VACE-Q4_K_M.gguf")
+        # Provide the base components via a complete full-14B cache.
+        _seed_model_index(cfg, "wan-14b-vace")
+    elif backend == "wan-14b-vace":
+        _seed_model_index(cfg, "wan-14b-vace")
+    else:
+        _seed_model_index(cfg, "wan-1.3b-vace")
 
     req = GenerationRequest(
         segmented_image_path=seg,
@@ -366,7 +422,7 @@ def _vace_pipeline_request(tmp_path: Path, **cfg_overrides) -> tuple[GenerationR
         output_path=tmp_path / "generated.mp4",
         conditioning_video_path=pose_video,
         conditioning_mask_path=pose_mask,
-        backend="wan-1.3b-vace",
+        backend=backend,
         resolution="64x64",
         frames=5,
         device=cfg_overrides["device"],
@@ -479,6 +535,240 @@ class patch_sys_modules:
             if name not in self.previous:
                 sys.modules.pop(name, None)
         return False
+
+
+# ── Phase 2: 14B + 14B-GGUF backends ─────────────────────────────────────────
+
+
+def _bare_vace_request(tmp_path: Path, backend: str, frames: int = 5) -> tuple[GenerationRequest, MotionMirrorConfig]:
+    """A real-path request with conditioning inputs but NO seeded weights."""
+    seg = tmp_path / "seg.png"
+    Image.new("RGBA", (32, 32), (255, 255, 255, 255)).save(seg)
+    pose_video = tmp_path / "pose.mp4"
+    pose_mask = tmp_path / "mask.mp4"
+    _write_rgb_video(pose_video)
+    _write_rgb_video(pose_mask, value=0)
+
+    req = GenerationRequest(
+        segmented_image_path=seg,
+        trajectory_map_path=tmp_path / "traj.npz",
+        output_path=tmp_path / "out.mp4",
+        conditioning_video_path=pose_video,
+        conditioning_mask_path=pose_mask,
+        backend=backend,
+        resolution="128x64",
+        frames=frames,
+        device="cpu",
+    )
+    cfg = MotionMirrorConfig(
+        project_root=tmp_path,
+        cache_dir=tmp_path / "cache",
+        backend=backend,
+        device="cpu",
+    )
+    return req, cfg
+
+
+def test_vace_14b_dispatch_uses_14b_cache_and_backend(tmp_path):
+    req, cfg = _vace_pipeline_request(tmp_path, backend="wan-14b-vace")
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        result = generate_with_vace(req, cfg)
+
+    assert result.backend == "wan-14b-vace"
+    assert result.video_path.exists()
+    # WanVACEPipeline.from_pretrained was pointed at the 14B cache dir.
+    args, _kwargs = FakePipe.last_instance.pretrained_args
+    assert "wan-14b-vace" in str(args[0])
+    assert "wan-1.3b-vace" not in str(args[0])
+
+
+@pytest.mark.parametrize(
+    "backend,group",
+    [
+        ("wan-1.3b-vace", "vace"),
+        ("wan-14b-vace", "vace-14b"),
+        ("wan-14b-vace-gguf", "vace-14b-gguf"),
+    ],
+)
+def test_vace_missing_weights_hints_download_group(tmp_path, backend, group):
+    req, cfg = _bare_vace_request(tmp_path, backend)
+    with pytest.raises(FileNotFoundError, match=re.escape(f"--model {group}")):
+        generate_with_vace(req, cfg)
+
+
+def test_vace_gguf_loader_uses_exact_args(tmp_path):
+    # CUDA path: the production config — dtype follows the device (bf16 on
+    # cuda, fp32 on cpu), so assert against the cuda run the pod will do.
+    req, cfg = _vace_pipeline_request(tmp_path, backend="wan-14b-vace-gguf", device="cuda")
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=True)):
+        result = generate_with_vace(req, cfg)
+
+    assert result.backend == "wan-14b-vace-gguf"
+    kw = FakeWanVACETransformer3DModel.last_kwargs
+    assert kw is not None
+    assert kw["config"] == "Wan-AI/Wan2.1-VACE-14B-diffusers"
+    assert kw["subfolder"] == "transformer"
+    assert kw["torch_dtype"] == "bfloat16"
+    # GGUF quantization config built with bf16 compute dtype and passed through.
+    assert kw["quantization_config"] is FakeGGUFQuantizationConfig.last_instance
+    assert FakeGGUFQuantizationConfig.last_instance.compute_dtype == "bfloat16"
+    # The transformer path (positional arg 0) points at the .gguf file.
+    assert "Wan2.1_14B_VACE-Q4_K_M.gguf" in str(FakeWanVACETransformer3DModel.last_args[0])
+    # The loaded transformer is injected into the pipeline.
+    _args, pkwargs = FakePipe.last_instance.pretrained_args
+    assert "transformer" in pkwargs
+    assert getattr(pkwargs["transformer"], "_sentinel", None) == "fake-gguf-transformer"
+
+
+def test_vace_gguf_missing_transformer_file_raises(tmp_path):
+    req, cfg = _bare_vace_request(tmp_path, "wan-14b-vace-gguf")
+    # Seed only the base components; leave the .gguf transformer absent.
+    _seed_model_index(cfg, "wan-14b-vace")
+    with pytest.raises(FileNotFoundError, match="Wan2.1_14B_VACE-Q4_K_M.gguf"):
+        generate_with_vace(req, cfg)
+
+
+# ── _resolve_gguf_base_source 3-way (absent ≠ incomplete) ─────────────────────
+
+
+def _gguf_cfg(tmp_path: Path) -> MotionMirrorConfig:
+    return MotionMirrorConfig(
+        project_root=tmp_path,
+        cache_dir=tmp_path / "cache",
+        backend="wan-14b-vace-gguf",
+        device="cpu",
+    )
+
+
+def test_resolve_gguf_base_source_full_cache(tmp_path):
+    from motion_mirror.generate import vace
+
+    cfg = _gguf_cfg(tmp_path)
+    spec = vace._VACE_BACKEND_SPECS["wan-14b-vace-gguf"]
+    full_dir = _seed_model_index(cfg, "wan-14b-vace")
+    assert vace._resolve_gguf_base_source(cfg, spec) == str(full_dir)
+
+
+def test_resolve_gguf_base_source_base_complete(tmp_path):
+    from motion_mirror.generate import vace
+
+    cfg = _gguf_cfg(tmp_path)
+    spec = vace._VACE_BACKEND_SPECS["wan-14b-vace-gguf"]
+    base_dir = _seed_model_index(cfg, "wan-14b-vace-base")
+    assert vace._resolve_gguf_base_source(cfg, spec) == str(base_dir)
+
+
+def test_resolve_gguf_base_source_both_absent_returns_hub_id(tmp_path, capsys):
+    from motion_mirror.generate import vace
+
+    cfg = _gguf_cfg(tmp_path)
+    spec = vace._VACE_BACKEND_SPECS["wan-14b-vace-gguf"]
+    result = vace._resolve_gguf_base_source(cfg, spec)
+    assert result == "Wan-AI/Wan2.1-VACE-14B-diffusers"
+    # An info line warns about the impending multi-GB download.
+    assert "multi-GB" in capsys.readouterr().out
+
+
+def test_resolve_gguf_base_source_base_partial_raises(tmp_path):
+    from motion_mirror.generate import vace
+
+    cfg = _gguf_cfg(tmp_path)
+    spec = vace._VACE_BACKEND_SPECS["wan-14b-vace-gguf"]
+    base_dir = cfg.model_cache("wan-14b-vace-base")
+    (base_dir / "diffusion_pytorch_model.safetensors").write_bytes(b"\x00")
+    with pytest.raises(FileNotFoundError, match=re.escape("--model vace-14b-gguf")):
+        vace._resolve_gguf_base_source(cfg, spec)
+
+
+# ── memory-policy matrix ──────────────────────────────────────────────────────
+
+
+def test_memory_policy_14b_full_offload_uses_sequential(tmp_path):
+    req, cfg = _vace_pipeline_request(
+        tmp_path, backend="wan-14b-vace", device="cuda", offload_model=True, t5_cpu=True
+    )
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=True)):
+        generate_with_vace(req, cfg)
+
+    pipe = FakePipe.last_instance
+    assert pipe.sequential_offload_called is True
+    assert pipe.model_cpu_offload_called is False
+
+
+def test_memory_policy_gguf_offload_uses_whole_module(tmp_path):
+    req, cfg = _vace_pipeline_request(
+        tmp_path, backend="wan-14b-vace-gguf", device="cuda", offload_model=True, t5_cpu=True
+    )
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=True)):
+        generate_with_vace(req, cfg)
+
+    pipe = FakePipe.last_instance
+    # GGUF must use whole-module offload and NEVER sequential (quant metadata).
+    assert pipe.model_cpu_offload_called is True
+    assert pipe.sequential_offload_called is False
+
+
+def test_memory_policy_gguf_no_offload_honors_to_device_and_t5(tmp_path):
+    req, cfg = _vace_pipeline_request(
+        tmp_path, backend="wan-14b-vace-gguf", device="cuda", offload_model=False, t5_cpu=True
+    )
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=True)):
+        generate_with_vace(req, cfg)
+
+    pipe = FakePipe.last_instance
+    assert pipe.model_cpu_offload_called is False
+    assert pipe.sequential_offload_called is False
+    assert pipe.device == "cuda"
+    assert pipe.text_encoder.device == "cpu"
+
+
+# ── fp32 VAE across all real backends ─────────────────────────────────────────
+
+
+@pytest.mark.parametrize("backend", ["wan-1.3b-vace", "wan-14b-vace", "wan-14b-vace-gguf"])
+def test_vace_uses_fp32_vae(tmp_path, backend):
+    req, cfg = _vace_pipeline_request(tmp_path, backend=backend)
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        generate_with_vace(req, cfg)
+
+    assert FakeAutoencoderKLWan.last_kwargs is not None
+    assert FakeAutoencoderKLWan.last_kwargs["subfolder"] == "vae"
+    assert FakeAutoencoderKLWan.last_kwargs["torch_dtype"] == "float32"
+
+
+# ── 4k+1 frame rejection on the new backends ──────────────────────────────────
+
+
+@pytest.mark.parametrize("backend", ["wan-14b-vace", "wan-14b-vace-gguf"])
+def test_vace_new_backends_reject_non_4k_plus_1_frames(tmp_path, backend):
+    req, cfg = _bare_vace_request(tmp_path, backend, frames=80)
+    with pytest.raises(ValueError, match="4k\\+1"):
+        generate_with_vace(req, cfg)
+
+
+# ── GGUF finally-cleanup releases VRAM even on failure ────────────────────────
+
+
+def test_vace_gguf_empties_cuda_cache_when_generation_raises(tmp_path):
+    req, cfg = _vace_pipeline_request(tmp_path, backend="wan-14b-vace-gguf", device="cuda")
+    modules = _fake_diffusers_modules(cuda_available=True)
+    empty_cache_calls = []
+    modules["torch"].cuda.empty_cache = lambda: empty_cache_calls.append(1)
+
+    class ExplodingPipe(FakePipe):
+        def __call__(self, **kwargs):
+            raise RuntimeError("CUDA out of memory")
+
+    modules["diffusers"].WanVACEPipeline = ExplodingPipe
+
+    with patch_sys_modules(modules):
+        with pytest.raises(RuntimeError, match="out of memory"):
+            generate_with_vace(req, cfg)
+
+    # Pre-load clear + finally-block cleanup (which also releases the transformer).
+    assert len(empty_cache_calls) == 2
 
 
 def test_vace_prompt_never_names_the_control_modality():

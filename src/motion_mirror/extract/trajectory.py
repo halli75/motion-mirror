@@ -35,7 +35,7 @@ import cv2
 import numpy as np
 
 from ..config import MotionMirrorConfig
-from ..types import PoseSequence, ReferenceMaskResult, SegmentationResult, TrajectoryMap
+from ..types import PoseSequence, SegmentationResult, TrajectoryMap
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -73,7 +73,6 @@ def synthesize_trajectory(
     segmentation: SegmentationResult,
     motion_video_path: Path,
     config: MotionMirrorConfig | None = None,
-    reference_masks: ReferenceMaskResult | None = None,
 ) -> TrajectoryMap:
     """Build a dense trajectory map for use with the generation backend.
 
@@ -130,12 +129,7 @@ def synthesize_trajectory(
     # reference video's coordinate space, not the character image space.
     # We derive the mask from pose keypoints so it is always correctly sized.
     fh, fw = frames[0].shape[:2]
-    video_body_mask = _select_video_body_mask(
-        kps[0],
-        (fh, fw),
-        num_frames,
-        reference_masks,
-    )
+    video_body_mask = _build_video_body_mask(kps[0], (fh, fw))
 
     # --- Camera motion compensation ----------------------------------------
     stabilized_frames, homographies = _compensate_camera_motion(frames, video_body_mask)
@@ -266,25 +260,6 @@ def _build_video_body_mask(
         mask[h // 5: 4 * h // 5, w // 5: 4 * w // 5] = 255
 
     return mask
-
-
-def _select_video_body_mask(
-    keypoints_f0: np.ndarray,
-    frame_hw: tuple[int, int],
-    num_frames: int,
-    reference_masks: ReferenceMaskResult | None,
-) -> np.ndarray:
-    """Prefer propagated reference masks when opt-in SAM-2 masking is available."""
-    if reference_masks is None:
-        return _build_video_body_mask(keypoints_f0, frame_hw)
-
-    from .reference_mask import resample_reference_masks
-
-    h, w = frame_hw
-    masks = resample_reference_masks(reference_masks, num_frames, size=(w, h))
-    if masks.shape[0] == 0:
-        return _build_video_body_mask(keypoints_f0, frame_hw)
-    return np.where(masks[0] > 127, np.uint8(255), np.uint8(0))
 
 
 def _compensate_camera_motion(

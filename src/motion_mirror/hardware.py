@@ -48,7 +48,13 @@ def get_gpu_info() -> GPUInfo | None:
 
 
 def recommend_backend(vram_gb: float) -> tuple[str, dict]:
-    """Return (backend_name, config_overrides) for the available free VRAM."""
+    """Return (backend_name, config_overrides) for the available free VRAM.
+
+    Invariant: auto must never route to a backend without a measured VRAM
+    floor. The 14B backends (wan-14b-vace, wan-14b-vace-gguf) are
+    explicit-only until GPU-validated, so this function only ever returns
+    wan-1.3b-vace (the sole backend with a measured _MIN_VRAM_GB).
+    """
     if vram_gb >= _MIN_VRAM_GB:
         return "wan-1.3b-vace", {"offload_model": True, "t5_cpu": True}
 

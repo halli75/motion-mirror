@@ -4,7 +4,7 @@
 
 Motion Mirror is the open-source alternative to Kling AI's Motion Control. Give it a character image and a reference video; it produces an animated video of your character performing the same motion. Everything runs on your machine — no cloud, no API keys, no per-clip fees.
 
-> **Early release** — v0.3 ships a focused, GPU-validated backend lineup built around the Wan2.1-VACE 1.3B model. See [Known Limitations](#known-limitations) before installing.
+> **Early release** — the GPU-validated lineup is built around the Wan2.1-VACE 1.3B model; v0.4 adds explicit-only, UNVALIDATED 14B backends on top. See [Known Limitations](#known-limitations) before installing.
 
 ---
 
@@ -48,6 +48,13 @@ CPU-only mode is not supported for real generation (mock mode works for testing)
 
 > **VRAM note:** `wan-1.3b-vace` measured an **8.02 GB peak** on the RTX 3090/4090 validation runs (2026-07-03, 17-frame smoke, `--offload-model --t5-cpu`). Auto-selection requires **≥9.02 GB free VRAM** (measured peak + 1 GB headroom); below that floor, `--auto` cannot run real generation and you should use `--backend mock`.
 
+> **14B backends (UNVALIDATED):** the optional `wan-14b-vace` and
+> `wan-14b-vace-gguf` backends (Wan2.1-VACE-14B) need much more disk and system
+> RAM: **~75 GB disk** for `vace-14b` or **~24 GB** for `vace-14b-gguf`, plus
+> **≥24 GB system RAM** for T5 CPU offload. Their peak VRAM (~8–12 GB at 480p with
+> offload) is a **community estimate only — not measured by this project**. These
+> backends are explicit-only and `--auto` never selects them.
+
 ---
 
 ## Installation
@@ -70,7 +77,7 @@ Or from PyPI once published:
 pip install "motion-mirror[cuda,gpu-inference]"
 ```
 
-### 3. Optional: SAM-2 segmenter / reference-video masker
+### 3. Optional: SAM-2 character-image segmenter
 
 ```bash
 pip install git+https://github.com/facebookresearch/sam2.git
@@ -79,18 +86,29 @@ pip install git+https://github.com/facebookresearch/sam2.git
 ### 4. Download model weights
 
 ```bash
-# Wan2.1-VACE-1.3B generation model (~5 GB, diffusers format)
+# Wan2.1-VACE-1.3B generation model (~19 GB, diffusers format)
 motion-mirror download --model wan-1.3b-vace
 
 # DWPose-L pose estimation (detector + pose, ~350 MB)
 motion-mirror download --model dwpose
 
-# SAM-2 segmenter / reference-video masker (~900 MB)
+# SAM-2 character-image segmenter (~1.8 GB)
 motion-mirror download --model sam2
+
+# Wan2.1-VACE-14B full diffusers weights (~75 GB) — UNVALIDATED backend
+motion-mirror download --model vace-14b
+
+# Wan2.1-VACE-14B GGUF Q4_K_M (~11.6 GB) + base components (~12 GB) ≈ ~24 GB total — UNVALIDATED backend
+motion-mirror download --model vace-14b-gguf
 ```
 
-`--model` also accepts groups: `vace`, `dwpose`, `extras`, or `all`. Downloads go
+`--model` also accepts groups: `dwpose`, `vace`, `vace-14b`, `vace-14b-gguf`,
+`extras`, or `all`. Downloads go
 to `~/.cache/motion-mirror/`. A disk-space check runs before each download.
+
+> **Note:** the `all` group **deliberately excludes** `vace-14b` and
+> `vace-14b-gguf` — those large, UNVALIDATED 14B downloads must be requested
+> explicitly by name.
 
 ---
 
@@ -117,7 +135,6 @@ motion-mirror run character.png motion.mp4 \
   --density 512 \
   --flow-estimator raft \
   --segmenter sam2 \
-  --reference-masker sam2 \
   --device cuda \
   --output-dir ./my_outputs
 
@@ -146,24 +163,26 @@ Commands:
 
 ```bash
 motion-mirror run character.png motion.mp4 \
-  --backend auto|wan-1.3b-vace|mock \
+  --backend auto|wan-1.3b-vace|wan-14b-vace|wan-14b-vace-gguf|mock \
   --auto \
   --offload-model \
   --t5-cpu \
   --flow-estimator raft \
-  --segmenter sam2 \
-  --reference-masker sam2
+  --segmenter sam2
 ```
 
-`--reference-masker sam2` (SAM-2 propagation over the reference video) is the
-least battle-tested option; segmentation of the character image with
-`--segmenter sam2` is validated. Non-GPU CI covers config, CLI, routing, and
-mocked backend contracts.
+Segmentation of the character image with `--segmenter sam2` is validated.
+Non-GPU CI covers config, CLI, routing, and mocked backend contracts.
 
 > **Conditioning note:** `wan-1.3b-vace` conditions the Wan2.1-VACE pipeline on
 > per-frame skeleton (OpenPose-18) and mask frames derived from the reference
 > video. Reference-image identity adherence is loose at 1.3B scale — see
 > [Known Limitations](#known-limitations).
+
+> **14B backends (`wan-14b-vace`, `wan-14b-vace-gguf`):** available as
+> **explicit-only** choices — `--auto` will **never** select them, and they are
+> **UNVALIDATED** (never run or VRAM-measured by this project). See
+> [Validation Status](#validation-status) before using.
 
 ### Presets
 
@@ -201,7 +220,6 @@ cfg = MotionMirrorConfig(
     t5_cpu=True,
     flow_estimator="raft",
     segmenter="sam2",
-    reference_masker="sam2",
     device="cuda",
 )
 
@@ -241,25 +259,28 @@ All exceptions inherit from `MotionMirrorError`.
 The Wan2.1-VACE 1.3B backend follows the reference motion well but does not
 strongly lock onto the input character's face and appearance — identity can
 drift, especially during large head movements or fast motion. This is a known
-limitation of the 1.3B model, not a bug. Strong identity preservation is a
-larger-model research problem and is not addressed at this scale.
+limitation of the 1.3B model, not a bug. The larger `wan-14b-vace` and
+`wan-14b-vace-gguf` backends (Wan2.1-VACE-14B) exist as the **untested candidate
+fix** for this — the 14B model is expected to improve reference-image identity
+adherence, but this project has **not GPU-validated either 14B backend**, so the
+improvement is unconfirmed. See the Validation Status table below.
 
 **Single-person only**
 Multi-person reference videos raise `MultiplePeopleDetectedError`. Crop the
 reference video to one person before running Motion Mirror.
 
-**SAM-2 reference-video masking is experimental**
-`--segmenter sam2` (character-image segmentation) is validated. `--reference-masker sam2`
-(SAM-2 mask propagation across the reference video) is newer and less tested.
+**SAM-2 is limited to character-image segmentation**
+`--segmenter sam2` (character-image segmentation) is the only validated SAM-2
+path.
 
 **~9 GB+ free VRAM required for real generation**
 The 1.3B VACE backend measured an 8.02 GB peak with `--offload-model --t5-cpu`
 and needs ~9 GB free VRAM to run. CPU offloading uses system RAM as overflow
 storage during inference. Cards below this floor should use `--backend mock`.
 
-**~5 GB model download**
-First run requires downloading ~5 GB (Wan2.1-VACE-1.3B) + ~350 MB (DWPose),
-plus ~900 MB if SAM-2 is used. Allow ~30 GB free disk space for caches and
+**~19 GB model download**
+First run requires downloading ~19 GB (Wan2.1-VACE-1.3B) + ~350 MB (DWPose),
+plus ~1.8 GB if SAM-2 is used. Allow ~30 GB free disk space for caches and
 working files.
 
 **Generation time**
@@ -278,7 +299,16 @@ validation was run on RunPod (RTX 3090/4090, 2026-07-03) via `runpod-validation/
 | Backend | Target Hardware | Status |
 |---|---:|---|
 | `wan-1.3b-vace` | ~9–12 GB free VRAM | **PASS** — end-to-end motion transfer, 8.02 GB peak (17-frame smoke) |
+| `wan-14b-vace` | ~8–12 GB peak (community estimate) | **UNVALIDATED** — never run or measured by this project |
+| `wan-14b-vace-gguf` | ~8–12 GB peak (community estimate) | **UNVALIDATED** — never run or measured by this project |
 | `mock` | CPU / any | Testing only, no real generation |
+
+> **UNVALIDATED backends:** `wan-14b-vace` and `wan-14b-vace-gguf` (Wan2.1-VACE-14B)
+> have **not** been GPU-validated by this project. The ~8–12 GB peak VRAM at 480p
+> with offload is a **community estimate only — not measured here**. They are
+> **explicit-only**: you must pass `--backend wan-14b-vace` or
+> `--backend wan-14b-vace-gguf`; `--auto` **never** selects them. Running the 14B
+> model requires **≥24 GB system RAM** for T5 CPU offload.
 
 See [`docs/windows-install.md`](docs/windows-install.md) for Windows setup notes.
 
@@ -290,9 +320,10 @@ See [`docs/windows-install.md`](docs/windows-install.md) for Windows setup notes
 |---|---|---|
 | **v0.1** | End-to-end pipeline | Trajectory synthesis, CLI, UI |
 | **v0.2** | Hardware accessibility | 1.3B VACE backend, RAFT / SAM-2 options |
-| **v0.3** *(current)* | VACE-only lineup | GPU-validated `wan-1.3b-vace`, ComfyUI nodes |
-| **v0.4** | Quality | Face restoration, frame interpolation, CI benchmarks |
-| **v0.5** | Community | LoRA fine-tuning, batch mode, docs site |
+| **v0.3** | VACE-only lineup | GPU-validated `wan-1.3b-vace`, ComfyUI nodes |
+| **v0.4** *(current)* | Scale | 14B VACE backends (UNVALIDATED), GGUF quantization, sam2-masker removal |
+| **v0.5** | Quality | Face restoration, frame interpolation, CI benchmarks |
+| **v0.6** | Community | LoRA fine-tuning, batch mode, docs site |
 | **v1.0** | Stable | Preset library, PyPI + Docker, stable Python API |
 
 ---

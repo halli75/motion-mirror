@@ -10,7 +10,38 @@ from ..config import MotionMirrorConfig
 from ..types import GenerationResult
 from .models import GenerationRequest
 
-_WAN_VACE_MODEL_ID = "Wan-AI/Wan2.1-VACE-1.3B-diffusers"
+# Per-backend model specs. `name` echoes the backend key so the result can
+# report the ACTUAL backend used. `download_group` names the CLI group
+# (`motion-mirror download --model <group>`) that fetches this backend's
+# weights, so error hints point at the right download. GGUF backends carry a
+# `gguf_filename` (the quantized transformer) plus `base_cache_subdir` /
+# `full_cache_subdir` for the un-quantized base components (VAE, text encoder,
+# scheduler, config).
+_VACE_BACKEND_SPECS: dict[str, dict] = {
+    "wan-1.3b-vace": {
+        "name": "wan-1.3b-vace",
+        "model_id": "Wan-AI/Wan2.1-VACE-1.3B-diffusers",
+        "cache_subdir": "wan-1.3b-vace",
+        "download_group": "vace",
+        "gguf": None,
+    },
+    "wan-14b-vace": {
+        "name": "wan-14b-vace",
+        "model_id": "Wan-AI/Wan2.1-VACE-14B-diffusers",
+        "cache_subdir": "wan-14b-vace",
+        "download_group": "vace-14b",
+        "gguf": None,
+    },
+    "wan-14b-vace-gguf": {
+        "name": "wan-14b-vace-gguf",
+        "model_id": "Wan-AI/Wan2.1-VACE-14B-diffusers",
+        "cache_subdir": "wan-14b-vace-gguf",
+        "base_cache_subdir": "wan-14b-vace-base",
+        "full_cache_subdir": "wan-14b-vace",
+        "gguf_filename": "Wan2.1_14B_VACE-Q4_K_M.gguf",
+        "download_group": "vace-14b-gguf",
+    },
+}
 # Describe the desired subject, NEVER the conditioning mechanism: the text
 # prompt dominates subject choice, and naming the control signal ("skeleton")
 # made VACE render an anatomical skeleton instead of the reference character
@@ -36,7 +67,7 @@ def generate_with_vace(
     request: GenerationRequest,
     config: MotionMirrorConfig | None = None,
 ) -> GenerationResult:
-    """Generate via the lightweight Wan VACE backend."""
+    """Generate via a Wan VACE backend (1.3B, 14B, or 14B-GGUF)."""
     cfg = config or MotionMirrorConfig()
 
     try:
@@ -52,7 +83,17 @@ def generate_with_vace(
     if cfg.backend == "mock" or request.backend == "mock":
         return _generate_mock(request, out_w, out_h)
 
-    return _generate_vace_1b(request, cfg, out_w, out_h)
+    # Prefer the request's explicit backend; fall back to config for
+    # placeholder values ("auto"/"mock"/unset).
+    backend = request.backend if request.backend not in (None, "auto", "mock") else cfg.backend
+    spec = _VACE_BACKEND_SPECS.get(backend)
+    if spec is None:
+        raise ValueError(
+            f"Unknown VACE backend {backend!r}. "
+            f"Known VACE backends: {sorted(_VACE_BACKEND_SPECS)}."
+        )
+
+    return _generate_vace(request, cfg, out_w, out_h, spec)
 
 
 def _generate_mock(
@@ -82,26 +123,46 @@ def _generate_mock(
     )
 
 
-def _generate_vace_1b(
+def _generate_vace(
     request: GenerationRequest,
     config: MotionMirrorConfig,
     out_w: int,
     out_h: int,
+    spec: dict,
 ) -> GenerationResult:
     _validate_vace_inputs(request)
-    model_source = _resolve_model_source(config)
+    is_gguf = spec.get("gguf_filename") is not None
+
+    if is_gguf:
+        transformer_path = _resolve_gguf_transformer_path(config, spec)
+    else:
+        model_source = _resolve_model_source(config, spec)
 
     try:
         import torch  # type: ignore[import]
         from PIL import Image  # type: ignore[import]
-        from diffusers import AutoencoderKLWan, WanVACEPipeline  # type: ignore[import]
+        if is_gguf:
+            from diffusers import (  # type: ignore[import]
+                AutoencoderKLWan,
+                GGUFQuantizationConfig,
+                WanVACEPipeline,
+                WanVACETransformer3DModel,
+            )
+        else:
+            from diffusers import AutoencoderKLWan, WanVACEPipeline  # type: ignore[import]
         from diffusers.schedulers.scheduling_unipc_multistep import (  # type: ignore[import]
             UniPCMultistepScheduler,
         )
+        if is_gguf:
+            # diffusers defers the gguf-package check until dequantization;
+            # import it here so a missing dep fails with THIS message instead
+            # of a diffusers-internal error mid-load.
+            import gguf  # type: ignore[import]  # noqa: F401
     except ImportError as exc:
         raise ImportError(
-            "Wan VACE requires torch, Pillow, and diffusers.\n"
-            "Run: pip install diffusers>=0.33 transformers accelerate pillow"
+            "Wan VACE requires torch, Pillow, and diffusers>=0.35 "
+            "(plus the gguf package for the GGUF backend).\n"
+            'Run: pip install "diffusers>=0.35.0" transformers accelerate pillow gguf'
         ) from exc
 
     device = _resolve_device(config, torch)
@@ -110,16 +171,39 @@ def _generate_vace_1b(
     if getattr(torch.cuda, "is_available", lambda: False)():
         torch.cuda.empty_cache()
 
-    vae = AutoencoderKLWan.from_pretrained(
-        model_source,
-        subfolder="vae",
-        torch_dtype=torch.float32,
-    )
-    pipe = WanVACEPipeline.from_pretrained(
-        model_source,
-        vae=vae,
-        torch_dtype=dtype,
-    )
+    transformer = None
+    if is_gguf:
+        base_source = _resolve_gguf_base_source(config, spec)
+        transformer = WanVACETransformer3DModel.from_single_file(
+            str(transformer_path),
+            quantization_config=GGUFQuantizationConfig(compute_dtype=dtype),
+            config=spec["model_id"],
+            subfolder="transformer",
+            torch_dtype=dtype,
+        )
+        # fp32 VAE avoids the bf16 decode artifacts seen on the non-quantized path.
+        vae = AutoencoderKLWan.from_pretrained(
+            base_source,
+            subfolder="vae",
+            torch_dtype=torch.float32,
+        )
+        pipe = WanVACEPipeline.from_pretrained(
+            base_source,
+            transformer=transformer,
+            vae=vae,
+            torch_dtype=dtype,
+        )
+    else:
+        vae = AutoencoderKLWan.from_pretrained(
+            model_source,
+            subfolder="vae",
+            torch_dtype=torch.float32,
+        )
+        pipe = WanVACEPipeline.from_pretrained(
+            model_source,
+            vae=vae,
+            torch_dtype=dtype,
+        )
 
     flow_shift = 5.0 if max(out_w, out_h) >= 720 else 3.0
     pipe.scheduler = UniPCMultistepScheduler.from_config(
@@ -128,7 +212,7 @@ def _generate_vace_1b(
     )
     if hasattr(pipe, "enable_attention_slicing"):
         pipe.enable_attention_slicing(1)
-    _apply_memory_policy(pipe, config, device)
+    _apply_memory_policy(pipe, config, device, gguf=is_gguf)
 
     reference_image = Image.open(request.segmented_image_path).convert("RGBA")
     background = Image.new("RGBA", reference_image.size, (0, 0, 0, 255))
@@ -168,12 +252,16 @@ def _generate_vace_1b(
         _write_output_video(request.output_path, output)
     finally:
         del pipe, vae
+        # GGUF path holds an extra transformer handle; release it before
+        # clearing the CUDA cache so the freed VRAM is actually reclaimed.
+        if transformer is not None:
+            del transformer
         if getattr(torch.cuda, "is_available", lambda: False)():
             torch.cuda.empty_cache()
 
     return GenerationResult(
         video_path=request.output_path,
-        backend="wan-1.3b-vace",
+        backend=spec["name"],
         resolution=request.resolution,
         num_frames=request.frames,
     )
@@ -200,19 +288,66 @@ def _validate_vace_inputs(request: GenerationRequest) -> None:
         )
 
 
-def _resolve_model_source(config: MotionMirrorConfig) -> str:
-    model_dir = config.model_cache("wan-1.3b-vace")
+def _resolve_model_source(config: MotionMirrorConfig, spec: dict) -> str:
+    model_dir = config.model_cache(spec["cache_subdir"])
+    group = spec["download_group"]
     if not model_dir.exists() or not any(model_dir.iterdir()):
         raise FileNotFoundError(
             f"Wan VACE weights not found in {model_dir}.\n"
-            "Run: motion-mirror download --model wan-1.3b-vace"
+            f"Run: motion-mirror download --model {group}"
         )
     if not (model_dir / "model_index.json").exists():
         raise FileNotFoundError(
             f"Wan VACE weights in {model_dir} are incomplete.\n"
-            "Expected a diffusers checkpoint with model_index.json."
+            "Expected a diffusers checkpoint with model_index.json.\n"
+            f"Run: motion-mirror download --model {group}"
         )
     return str(model_dir)
+
+
+def _resolve_gguf_base_source(config: MotionMirrorConfig, spec: dict) -> str:
+    """Locate the un-quantized base components for the GGUF pipeline.
+
+    Absent (nothing downloaded) and incomplete (a partial cache) are distinct:
+    the first is a legitimate first-run that pulls from the hub, the second is
+    a broken download the user must repair.
+    """
+    group = spec["download_group"]
+
+    # (a) A full 14B checkpoint already on disk provides every base component.
+    full_dir = config.model_cache(spec["full_cache_subdir"])
+    if (full_dir / "model_index.json").exists():
+        return str(full_dir)
+
+    # (b) A dedicated base-components cache (VAE/text-encoder/config only).
+    base_dir = config.model_cache(spec["base_cache_subdir"])
+    if (base_dir / "model_index.json").exists():
+        return str(base_dir)
+
+    # (c) Base dir absent or empty: first-time run, stream from the hub.
+    if not base_dir.exists() or not any(base_dir.iterdir()):
+        print(
+            f"[motion-mirror] Base components for {spec['name']} not cached; "
+            f"a multi-GB download from {spec['model_id']} will start now."
+        )
+        return spec["model_id"]
+
+    # (d) Base dir populated but missing model_index.json: partial/broken cache.
+    raise FileNotFoundError(
+        f"GGUF base components in {base_dir} are incomplete "
+        "(missing model_index.json).\n"
+        f"Run: motion-mirror download --model {group}"
+    )
+
+
+def _resolve_gguf_transformer_path(config: MotionMirrorConfig, spec: dict) -> Path:
+    transformer_path = config.model_cache(spec["cache_subdir"]) / spec["gguf_filename"]
+    if not transformer_path.exists() or transformer_path.stat().st_size == 0:
+        raise FileNotFoundError(
+            f"GGUF transformer not found: {transformer_path}.\n"
+            f"Run: motion-mirror download --model {spec['download_group']}"
+        )
+    return transformer_path
 
 
 def _resolve_device(config: MotionMirrorConfig, torch: object) -> str:
@@ -221,7 +356,27 @@ def _resolve_device(config: MotionMirrorConfig, torch: object) -> str:
     return "cpu"
 
 
-def _apply_memory_policy(pipe: object, config: MotionMirrorConfig, device: str) -> None:
+def _apply_memory_policy(
+    pipe: object,
+    config: MotionMirrorConfig,
+    device: str,
+    *,
+    gguf: bool = False,
+) -> None:
+    if (
+        gguf
+        and config.offload_model
+        and device.startswith("cuda")
+        and hasattr(pipe, "enable_model_cpu_offload")
+    ):
+        # GGUF-quantized params carry a `quant_type` attribute lost when
+        # sequential offload round-trips each weight through the meta device
+        # ... later crashing in diffusers' GGUF utils with `KeyError: None`.
+        # Whole-module offload keeps each component intact on the CPU<->GPU
+        # hops, preserving quant metadata.
+        pipe.enable_model_cpu_offload()
+        return
+
     if config.offload_model and device.startswith("cuda") and hasattr(pipe, "enable_sequential_cpu_offload"):
         # Sequential offload owns every submodule's device placement (weights
         # become meta tensors behind hooks); a manual t5_cpu move afterwards

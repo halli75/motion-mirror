@@ -40,21 +40,33 @@ BRANCH = "runpod-v02a-validation"
 REPO_URL = "https://github.com/halli75/motion-mirror.git"
 IMAGE = "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
 
+# TODO(gpu-run): SPEND_CAP_USD / wall_cap_h below (currently $4.50 / 3.5 h) are
+# almost certainly too tight for the Phase 2 matrix — ~130 GB of downloads
+# (est. 45-90 min) plus two 14B smokes under sequential CPU offload
+# (est. 20-60 min EACH). Realistic budget is ~6 h wall. DO NOT bump the numbers
+# silently: re-confirm the spend cap with the user before the next launch.
 SPEND_CAP_USD = 4.50
-# VACE-only lineup (v0.3): a single 24 GB-class pod validates wan-1.3b-vace
-# (vace + sam2-vace smokes). The 48 GB role was retired with the deleted
-# backends.
+# Phase 2 lineup: a single large-disk pod runs the 3-smoke VACE matrix —
+# wan-1.3b-vace (regression guard), wan-14b-vace-gguf (gguf resolver base-cache
+# path), and wan-14b-vace (full 14B). disk_gb sizes the container for the
+# combined caches (~19 + ~24 + ~75 GB, HF-API-measured) plus image and margin.
 ROLES = {
     "vace": {
         "gpus": ["NVIDIA GeForce RTX 3090", "NVIDIA GeForce RTX 4090"],
-        "disk_gb": 140,
+        "disk_gb": 200,
         "min_ram_gb": 48,
+        # TODO(gpu-run): see SPEND_CAP_USD note above — 3.5 h likely too tight
+        # for ~130 GB downloads + two offloaded 14B smokes; propose ~6 h and
+        # re-confirm with the user before launching.
         "wall_cap_h": 3.5,
     },
 }
 
 POLL_S = 30
 PROVISION_TIMEOUT_S = 15 * 60
+# TODO(gpu-run): the pod heartbeat only ticks while console.log is being
+# written. A 75 GB shard-load under offload can go silent for long stretches —
+# if the 14B smokes stall-trip this guard on a live pod, raise toward 30 min.
 HEARTBEAT_STALL_S = 15 * 60
 
 
@@ -164,6 +176,23 @@ def preflight() -> None:
         capture_output=True, text=True, cwd=HERE,
     )
     print(f"  branch {BRANCH} on remote: {'YES' if out.stdout.strip() else 'NO <-- push it'}")
+
+    # Credit protection: every model spec (repo, file, size) is verified
+    # against the live HF API BEFORE a pod spends money on downloads.
+    specs = subprocess.run(
+        [sys.executable, str(HERE.parent / "scripts" / "verify_model_specs.py")],
+        capture_output=True, text=True, cwd=HERE.parent,
+        env={**os.environ, "PYTHONPATH": str(HERE.parent / "src")},
+    )
+    result_line = next(
+        (ln.strip() for ln in specs.stdout.splitlines() if ln.strip().startswith("RESULT:")),
+        "no RESULT line",
+    )
+    if specs.returncode == 0:
+        print(f"  model specs vs HF API: {result_line}")
+    else:
+        print(f"  model specs vs HF API: FAILED <-- fix before launch ({result_line})")
+        print(specs.stdout)
 
 
 # ---------------------------------------------------------------- pod launch
@@ -275,7 +304,9 @@ def fetch_evidence(pod_id: str, role: str) -> None:
         print("no manifest; best-effort fetch of known paths")
         paths += [
             "evidence/env.json", "evidence/nvidia-smi.txt", "evidence/pip-freeze.txt",
-            "evidence/smoke/vace.json", "evidence/smoke/sam2-vace.json",
+            "evidence/smoke/vace.json",
+            "evidence/smoke/vace-14b-gguf.json",
+            "evidence/smoke/vace-14b.json",
         ]
     got = 0
     for path in dict.fromkeys(paths):  # dedupe, keep order

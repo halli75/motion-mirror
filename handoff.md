@@ -1,97 +1,93 @@
 # Motion Mirror — Session Handoff
 
-Last updated: 2026-07-04 (v0.3: VACE-only backend shift). Repo: https://github.com/halli75/motion-mirror
+Last updated: 2026-07-04 (v0.4.0a0: sam2-masker removal + 14B VACE backends, GPU-pending). Repo: https://github.com/halli75/motion-mirror
 
 ## Project
 
-Local-first motion transfer pipeline: animate a character image from a
-reference motion video. v0.3 consolidates onto the one backend that GPU
-validation proved works.
+Local-first motion transfer: animate a character image from a reference motion
+video. Validated core: `wan-1.3b-vace` (motion + scene correct, identity loose
+at 1.3B scale).
 
 ## THE HEADLINE
 
-**v0.3 is VACE-only.** GPU validation (2026-07-03, RTX 3090/4090) showed
-that of the five real backends, only `wan-1.3b-vace` delivers
-trajectory-driven motion transfer (PASS end-to-end, 8.02 GB peak). The
-wan-move family (14b/fast/gguf) discarded the dense trajectory (prompt-only
-motion) and concat-id required an unmerged DiffSynth fork — all four were
-deleted along with their presets, extras, docs, tests, and harness roles.
+**v0.4.0a0 is implemented and locally verified, GPU validation NOT yet run.**
+Two workstreams landed on `runpod-v02a-validation`:
 
-Surviving surface:
-- Backends: `auto` / `wan-1.3b-vace` / `mock` (config default `wan-1.3b-vace`).
-- `generate/controlnet.py` → `generate/vace.py` (`generate_with_vace`);
-  "controlnet" alias dropped.
-- `hardware.py` single tier: ≥9.02 GB free VRAM → vace with
-  `offload_model` + `t5_cpu`, else `InsufficientVRAMError`.
-- Presets: `default` / `low-vram` / `mock`. Version `0.3.0a0`.
-- Kept: DWPose extraction, SAM-2 (segmenter + reference-masker), ComfyUI
-  nodes, gpu-inference extra.
-- New: 4k+1 frame validation on the real VACE path; try/finally CUDA cache
-  cleanup around generation (review-wave find).
+1. **sam2 reference-masker mode DELETED.** Two GPU runs proved it broken by
+   design: VACE "keep" regions copy from the skeleton-on-black control video,
+   so a subject stencil always yields subject-on-black-void. (The mask
+   polarity bug found first was real and fixed, but the mode's ceiling made it
+   pointless.) `segmenter="sam2"` (character-image segmentation) KEPT.
+2. **Two 14B backends ADDED (GPU-UNVALIDATED):** `wan-14b-vace`
+   (Wan-AI/Wan2.1-VACE-14B-diffusers, ~75 GB) and `wan-14b-vace-gguf`
+   (QuantStack Q4_K_M transformer 11.6 GB + ~12 GB base via allow_patterns).
+   Explicit `--backend` only — **auto never selects them** (no measured VRAM
+   floor). Motivation: the 1.3B loose-identity limitation; 14B is the untested
+   candidate fix.
 
-Known limitation: reference-image identity adherence is loose at 1.3B scale
-(GPU run rendered a different-looking dancer than the reference; motion and
-scene were correct). Scaling identity quality (e.g. VACE-14B) is future work.
+## Credit-protection status (why the next GPU run should work first try)
+
+- `scripts/verify_model_specs.py`: every download spec verified against the
+  live HF API — **7/7 PASS** (repos, exact filenames, sizes ±15%,
+  allow_patterns coverage). Wired into `orchestrate.py preflight`.
+- It corrected 3 wrong sizes: wan-1.3b-vace is really ~19 GB (not 5),
+  sam2 ~1.8 GB, 14B base ~12 GB (gguf backend total ~24 GB, not 55).
+- GGUF loading path: diffusers gained WanVACETransformer3DModel single-file
+  support in **0.35.0** → pinned `diffusers>=0.35.0` + `gguf>=0.10.0`;
+  exact-args mocked tests lock the loader call; gguf uses
+  `enable_model_cpu_offload()` (sequential offload corrupts GGUF quant
+  metadata → KeyError: None). Residual risk: 14B GGUF inference untested
+  upstream (diffusers #11878 hit the 1.3B variant); user declined the local
+  11.6 GB CPU load-check.
+- Harness prepared, NOT run: 3-smoke matrix (1.3B regression → gguf →
+  full 14B; gguf deliberately BEFORE the full download so the base-cache
+  resolver path is exercised), disk 200 GB.
+  **TODO(gpu-run) decisions:** wall cap 3.5 h / spend cap $4.50 are too tight
+  for ~118 GB downloads + two offloaded 14B smokes (propose ~6 h); heartbeat
+  stall guard (15 min) may trip on silent 75 GB shard loads.
 
 ## Current state
 
-- Branch `runpod-v02a-validation`, PR #7 open → main. The v0.3 shift is
-  committed on top of the Wave-1/2/2b validation work.
-- Suite: **228 passed** (non-GPU), 7 gpu-marked deselected. Wheel builds
-  clean (`motion_mirror-0.3.0a0`). shellcheck clean.
-- Implementation: 5 parallel Opus packages (core src / interfaces / tests /
-  docs / harness) + 5-reviewer Sonnet wave. Review found: comfyui README
-  staleness, phantom `MOTION_MIRROR_MODEL_DIR` env var in windows-install,
-  dead multi-source download machinery in cli.py, hand-duplicated
-  valid_backends, missing CUDA-cleanup try/finally + tests, preset
-  frame-rule guard — all fixed. False positives (kept as-is):
-  `recommend_backend` tuple signature (spec'd), `vace` single-item download
-  group (spec'd), `generate/__init__` re-export (public API), the
-  `cfg.backend or request.backend` mock check (two legit entry points).
-- **GPU validation of the v0.3 tree NOT yet run — awaiting user approval**
-  (gpu-validate.yml is ready; single vace role, vace + sam2-vace smokes).
-- RunPod: 0 pods, session spend ~$2.03, balance ~$5.1. Never count or
-  terminate pods this orchestrator didn't create.
-
-## Validation harness (runpod-validation/)
-
-API-only, no SSH. Single role `vace` (3090/4090 spot, 140 GB disk, 3.5 h
-cap, $4.50 spend guard). `orchestrate.py run` (role defaults to vace) +
-`pod_bootstrap.sh` (groups dwpose/vace/extras; vace + sam2-vace smokes;
-status/heartbeat via :8000 proxy). Evidence → `runpod-validation/evidence/`.
-`RUNPOD_API_KEY` is set as a GitHub secret; gpu-validate.yml is
-workflow_dispatch with no inputs.
+- Branch `runpod-v02a-validation`, PR #7. Suite: **250 passed / 16 skipped
+  (network-marked) / 7 gpu-deselected**. Wheel 0.4.0a0 builds + installs.
+  shellcheck clean. `pytest -m network` (16 live HF tests) green.
+- 4-reviewer wave ran (correctness/tests/docs/harness); all confirmed
+  findings fixed: stale ImportError hint, gguf import-check, dtype follows
+  device, pipeline-level conditioning test for 14B backends, docs headings,
+  gguf license entry, LICENSE file added (was a broken README link),
+  spec-verifier wired into preflight, vestigial MM_GROUPS removed.
+- v0.3 history: VACE-only consolidation (1e6deb2), sam2 polarity fix
+  (faae660), GPU runs 2026-07-04: vace PASS ×3 (8.02 GB), sam2-vace dead end.
+- RunPod: 0 pods ours, balance ~$4.19. Never count/terminate pods this
+  orchestrator didn't create.
 
 ## Next steps
 
-1. **User-approved GPU confirm run** of the v0.3 tree (vace + sam2-vace,
-   ~$0.15-0.30). Judge by eyes on frame strips first, structural gate
-   second, then send video.
-2. 81-frame follow-up (doc rule: 17-frame pass owes an 81-frame confirm).
-3. Merge PR #7 once GPU-confirmed.
-4. Future: identity quality (VACE-14B research: GGUF quant availability,
-   newer Wan-base VACE checkpoints).
-
-## Gotchas / lessons (carried forward)
-
-- Judge GPU output by EYES on frame strips first — structural gate second
-  (numbers lied twice; user's review caught identity/background/motion
-  detail my strip review missed).
-- Local background orchestrators get reaped — pod runs autonomously,
-  Monitor polls proxy status.json, fetch+terminate on DONE.
-- pytest here can silently run the INSTALLED wheel, not src/ — use
-  `PYTHONPATH=src` (or editable install) for local runs.
-- bash `GROUPS` is readonly — prefix pod-script vars MM_*.
-- Content gates judge structure, not luminance.
-- RunPod spend: per-pod costPerHr×uptime; account balance is polluted by
-  other projects' pods.
-- Pipeline rejects .webm/.ogv — pod transcodes with ffmpeg.
-- gh works after `export GH_TOKEN=$(git credential fill ...)`.
+1. **GPU validation run (user approval + cap decision needed):** raise wall
+   cap to ~6 h, confirm spend (~$1.50-3.00 at 3090/4090 spot for downloads +
+   3 smokes), then `orchestrate.py run`. Judge by eyes on frame strips first.
+   Key question: does 14B fix identity?
+2. Merge PR #7 once validated.
+3. If 14B identity is good → consider promoting a 14B tier into auto with the
+   measured floor; possibly retire 1.3B or keep as low-VRAM tier.
 
 ## Key commands
 
 ```powershell
-$env:PYTHONPATH="src"; pytest -m "not gpu" -q --tb=short   # 228 green
-python runpod-validation/orchestrate.py preflight
-python runpod-validation/orchestrate.py run                # role defaults to vace
+$env:PYTHONPATH="src"; pytest -m "not gpu" -q      # 250 green
+$env:PYTHONPATH="src"; pytest -m network -q        # live HF spec checks
+python scripts/verify_model_specs.py               # 7/7 PASS expected
+python runpod-validation/orchestrate.py preflight  # includes spec gate
 ```
+
+## Gotchas (carried forward)
+
+- Judge GPU output by EYES on frame strips first; structural gate second.
+- pytest here can silently run the INSTALLED wheel — always PYTHONPATH=src.
+- Python write_text on Windows writes CRLF — pod_bootstrap.sh must stay LF
+  (shellcheck SC1017); use write_bytes or newline="\n".
+- Local background orchestrators get reaped — pod runs autonomously; poll
+  proxy status.json via Monitor; `attach --pod-id X` exists; terminate via
+  `orchestrate.py terminate --pod-id X`.
+- bash `GROUPS` readonly; RunPod balance polluted by other projects' pods;
+  .webm inputs need transcode.

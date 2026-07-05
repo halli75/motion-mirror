@@ -105,6 +105,8 @@ def create_app(config: "MotionMirrorConfig | None" = None):
                     choices=[
                         "auto",
                         "wan-1.3b-vace",
+                        "wan-14b-vace",
+                        "wan-14b-vace-gguf",
                         "mock",
                     ],
                     value=cfg_defaults.backend,

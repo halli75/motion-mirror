@@ -7,13 +7,14 @@ from typing import Literal, get_args
 BackendName = Literal[
     "auto",
     "wan-1.3b-vace",
+    "wan-14b-vace",
+    "wan-14b-vace-gguf",
     "mock",
 ]
 
 DeviceName = Literal["cuda", "cpu"]
 FlowEstimatorName = Literal["farneback", "raft"]
 SegmenterName = Literal["rembg", "sam2"]
-ReferenceMaskerName = Literal["pose", "sam2"]
 
 
 @dataclass(slots=True)
@@ -25,9 +26,18 @@ class MotionMirrorConfig:
     trajectory_density: int = 512  # 512 = default, 1024 = HQ
 
     # Generation backend
-    # "auto"          - detect VRAM at runtime and pick the best option
-    # "wan-1.3b-vace" - 1.3B VACE motion transfer, needs ~9 GB free VRAM
-    # "mock"          - solid-colour video, no GPU required
+    # "auto"               - detect VRAM at runtime and pick the best option
+    # "wan-1.3b-vace"      - 1.3B VACE motion transfer, needs ~9 GB free VRAM
+    # "wan-14b-vace"       - full Wan2.1-VACE-14B-diffusers (~75 GB download).
+    #                        Explicit-only via --backend; NOT selected by auto.
+    #                        GPU-unvalidated as of 0.4.0a0; community-estimated
+    #                        ~8-12 GB peak VRAM at 480p with offload_model+t5_cpu.
+    # "wan-14b-vace-gguf"  - QuantStack Q4_K_M quantized 14B transformer
+    #                        (~11.6 GB download vs ~75 GB full) + base components.
+    #                        Explicit-only via --backend; NOT selected by auto.
+    #                        GPU-unvalidated as of 0.4.0a0; community-estimated
+    #                        ~8-12 GB peak VRAM at 480p with offload_model+t5_cpu.
+    # "mock"               - solid-colour video, no GPU required
     backend: BackendName = "wan-1.3b-vace"
 
     resolution: str = "832x480"  # WxH string
@@ -41,7 +51,6 @@ class MotionMirrorConfig:
     # Optional stage upgrades (v0.2a)
     flow_estimator: Literal["farneback", "raft"] = "farneback"
     segmenter: Literal["rembg", "sam2"] = "rembg"
-    reference_masker: Literal["pose", "sam2"] = "pose"
 
     # Model cache
     cache_dir: Path = field(
@@ -77,7 +86,6 @@ class MotionMirrorConfig:
             ("device", get_args(DeviceName)),
             ("flow_estimator", get_args(FlowEstimatorName)),
             ("segmenter", get_args(SegmenterName)),
-            ("reference_masker", get_args(ReferenceMaskerName)),
         ):
             value = getattr(self, field_name)
             if value not in allowed:

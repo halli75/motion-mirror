@@ -102,8 +102,6 @@ def test_v02a_gpu_smoke_runner_matrix_writes_success_report(tmp_path):
         argv.extend(["--backend", backend])
     if cache_dir:
         argv.extend(["--cache-dir", cache_dir])
-    if os.environ.get("MOTION_MIRROR_GPU_REFERENCE_MASKER") == "sam2":
-        argv.extend(["--reference-masker", "sam2"])
 
     smoke = _load_gpu_smoke_script()
     exit_code = smoke.main(argv)

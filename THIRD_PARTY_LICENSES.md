@@ -66,12 +66,17 @@ license.
 ### diffusers (optional — GPU path only)
 - **License:** Apache 2.0
 - **Source:** https://github.com/huggingface/diffusers
-- **Use:** `WanVACEPipeline` for Wan2.1-VACE-1.3B video generation
+- **Use:** `WanVACEPipeline` / `WanVACETransformer3DModel` for the Wan2.1-VACE backends (1.3B and 14B, incl. GGUF loading)
 
 ### transformers (optional — GPU path only)
 - **License:** Apache 2.0
 - **Source:** https://github.com/huggingface/transformers
 - **Use:** UMT5 text encoder and tokenizer for the Wan-VACE pipeline
+
+### gguf (optional — GPU path only)
+- **License:** MIT
+- **Source:** https://github.com/ggml-org/llama.cpp/tree/master/gguf-py
+- **Use:** GGUF file parsing for the quantized 14B transformer (via diffusers `GGUFQuantizationConfig`)
 
 ### accelerate (optional — GPU path only)
 - **License:** Apache 2.0
@@ -96,7 +101,7 @@ license.
 ### sam2 (optional — segmentation/masking)
 - **License:** Apache 2.0
 - **Source:** https://github.com/facebookresearch/sam2
-- **Use:** SAM-2 character segmentation and optional reference-video masking
+- **Use:** SAM-2 character-image segmentation (`--segmenter sam2`)
 
 ---
 
@@ -106,7 +111,19 @@ license.
 - **License:** Apache 2.0
 - **Source:** https://huggingface.co/Wan-AI/Wan2.1-VACE-1.3B-diffusers
 - **Provider:** Alibaba / Wan-AI
-- **Use:** VACE generation backend for `wan-1.3b-vace` — the sole real generation backend.
+- **Use:** VACE generation backend for `wan-1.3b-vace` — the primary GPU-validated real generation backend.
+
+### Wan2.1-VACE-14B (optional, UNVALIDATED backend)
+- **License:** Apache 2.0
+- **Source:** https://huggingface.co/Wan-AI/Wan2.1-VACE-14B-diffusers
+- **Provider:** Alibaba / Wan-AI
+- **Use:** VACE generation backend for `wan-14b-vace` (~75 GB). Explicit-only and not GPU-validated by this project.
+
+### Wan2.1-VACE-14B GGUF quantizations (optional, UNVALIDATED backend)
+- **License:** Apache 2.0 (inherited from the Wan2.1-VACE-14B base model)
+- **Source:** https://huggingface.co/QuantStack/Wan2.1_14B_VACE-GGUF
+- **Provider:** Quantized and redistributed by QuantStack (base model by Alibaba / Wan-AI)
+- **Use:** GGUF Q4_K_M quantized weights for the `wan-14b-vace-gguf` backend. Explicit-only and not GPU-validated by this project.
 
 ### UMT5-XXL Text Encoder
 - **License:** Apache 2.0
@@ -138,7 +155,7 @@ license.
 - **License:** Apache 2.0
 - **Source:** https://huggingface.co/facebook/sam2-hiera-large
 - **Provider:** Meta / Facebook Research
-- **Use:** Optional SAM-2 segmentation and reference masking via `--segmenter sam2` and `--reference-masker sam2`
+- **Use:** Optional character-image segmentation (`--segmenter sam2`)
 
 ---
 

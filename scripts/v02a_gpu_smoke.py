@@ -19,7 +19,7 @@ import cv2
 
 from motion_mirror import MotionMirrorConfig, MotionMirrorPipeline
 
-V02A_BACKENDS = ("wan-1.3b-vace",)
+V02A_BACKENDS = ("wan-1.3b-vace", "wan-14b-vace", "wan-14b-vace-gguf")
 
 
 @dataclass(slots=True)
@@ -61,7 +61,6 @@ def main(argv: list[str] | None = None) -> int:
             motion=args.motion,
             output_dir=args.output_dir / backend,
             cache_dir=args.cache_dir,
-            reference_masker=args.reference_masker,
             resolution=args.resolution,
             frames=args.frames,
             density=args.density,
@@ -81,7 +80,6 @@ def main(argv: list[str] | None = None) -> int:
             "resolution": args.resolution,
             "frames": args.frames,
             "density": args.density,
-            "reference_masker": args.reference_masker,
         },
         "results": [asdict(result) for result in results],
     }
@@ -108,12 +106,6 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--frames", type=int, default=17)
     parser.add_argument("--density", type=int, default=256)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument(
-        "--reference-masker",
-        choices=("pose", "sam2"),
-        default="pose",
-        help="Use sam2 for the dedicated SAM-2 reference-mask propagation smoke.",
-    )
     parser.add_argument(
         "--allow-cpu",
         action="store_true",
@@ -154,7 +146,6 @@ def _run_backend(
     motion: Path,
     output_dir: Path,
     cache_dir: Path | None,
-    reference_masker: str,
     resolution: str,
     frames: int,
     density: int,
@@ -172,7 +163,6 @@ def _run_backend(
             backend=backend,
             output_dir=output_dir,
             cache_dir=cache_dir,
-            reference_masker=reference_masker,
             resolution=resolution,
             frames=frames,
             density=density,
@@ -224,7 +214,6 @@ def _build_config(
     backend: str,
     output_dir: Path,
     cache_dir: Path | None,
-    reference_masker: str,
     resolution: str,
     frames: int,
     density: int,
@@ -240,7 +229,6 @@ def _build_config(
         trajectory_density=density,
         offload_model=True,
         t5_cpu=True,
-        reference_masker=reference_masker,  # type: ignore[arg-type]
         device=device,
         cache_dir=cache_dir or MotionMirrorConfig().cache_dir,
     )

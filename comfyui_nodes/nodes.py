@@ -157,6 +157,8 @@ class MotionMirrorGenerate:
                     [
                         "auto",
                         "wan-1.3b-vace",
+                        "wan-14b-vace",
+                        "wan-14b-vace-gguf",
                         "mock",
                     ],
                     {"default": "auto"},

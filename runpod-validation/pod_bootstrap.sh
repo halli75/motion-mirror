@@ -320,6 +320,25 @@ download_group() { # download_group <group>
 
 group_ok() { ! grep -qx "download-$1" $WS/status/failures.txt 2>/dev/null; }
 
+# The rembg segmenter fetches u2net.onnx on first use from GitHub release
+# assets (release-assets.githubusercontent.com) — a host that has timed out
+# mid-run (2026-07-05, killed a smoke at the segmentation step before any
+# generation). Pre-warm it here with retries/backoff so the runtime call hits
+# a cached model instead of a flaky network. new_session caches to ~/.u2net,
+# shared with the pipeline's own new_session("u2net").
+prewarm_rembg() {
+  set_status prewarm-rembg false
+  for attempt in 1 2 3 4; do
+    if python3 -c "from rembg import new_session; new_session('u2net')"; then
+      echo "rembg u2net cached"
+      return 0
+    fi
+    echo "rembg u2net prewarm attempt $attempt failed; retrying"
+    sleep 20
+  done
+  record_failure "prewarm-rembg"
+}
+
 IMAGE=$WS/inputs/character.jpg
 MOTION=$WS/inputs/motion.mp4
 SMOKE=$REPO/scripts/v02a_gpu_smoke.py
@@ -339,7 +358,9 @@ if [ "${MM_EXPERIMENT:-0}" = "1" ]; then
   echo "experiment matrix: dwpose + vace-14b-gguf -> single wan-14b-vace-gguf run"
   download_group dwpose
   download_group vace-14b-gguf
-  if group_ok dwpose && group_ok vace-14b-gguf; then
+  prewarm_rembg
+  rembg_ok() { ! grep -qx "prewarm-rembg" $WS/status/failures.txt 2>/dev/null; }
+  if group_ok dwpose && group_ok vace-14b-gguf && rembg_ok; then
     run_smoke experiment wan-14b-vace-gguf \
       --frames "${MM_FRAMES:-81}" --steps "${MM_STEPS:-50}" \
       --resolution "${MM_RESOLUTION:-480x832}" --density "${MM_DENSITY:-256}"

@@ -8,7 +8,14 @@ Usage:
     set RUNPOD_API_KEY=...           (PowerShell: $env:RUNPOD_API_KEY="...")
     python runpod-validation/orchestrate.py preflight
     python runpod-validation/orchestrate.py run
+    python runpod-validation/orchestrate.py run --experiment \
+        --image char.jpg --motion motion.mp4     (private inputs, direct upload)
     python runpod-validation/orchestrate.py terminate --pod-id XXXX
+
+If the orchestrator dies mid-run in experiment mode, upload manually once the
+pod reaches the await-inputs phase:
+    curl -T char.jpg   https://<pod>-8001.proxy.runpod.net/character.jpg
+    curl -T motion.mp4 https://<pod>-8001.proxy.runpod.net/motion_src.mp4
 
 Spend guard: estimates OUR spend as costPerHr x uptime per pod we created
 (never account balance deltas — other projects' pods would pollute them).
@@ -115,14 +122,58 @@ def gql(query: str, variables: dict | None = None, retries: int = 3) -> dict:
     return data["data"]
 
 
-def proxy_fetch(pod_id: str, path: str, timeout: int = 30) -> bytes | None:
-    url = f"https://{pod_id}-8000.proxy.runpod.net/{path.lstrip('/')}"
+def proxy_fetch(pod_id: str, path: str, timeout: int = 30, port: int = 8000) -> bytes | None:
+    url = f"https://{pod_id}-{port}.proxy.runpod.net/{path.lstrip('/')}"
     req = urllib.request.Request(url, headers={"User-Agent": HEADERS["User-Agent"]})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read()
     except Exception:
         return None
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _put_file(pod_id: str, local: Path, remote_name: str, retries: int = 5) -> bool:
+    """HTTP PUT one file to the pod's :8001 upload receiver, with backoff."""
+    url = f"https://{pod_id}-8001.proxy.runpod.net/{remote_name}"
+    data = local.read_bytes()
+    for attempt in range(1, retries + 1):
+        req = urllib.request.Request(
+            url, data=data, method="PUT",
+            headers={"User-Agent": HEADERS["User-Agent"],
+                     "Content-Length": str(len(data))},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception as exc:  # noqa: BLE001
+            print(f"  upload {remote_name} attempt {attempt}/{retries} failed: {exc}")
+        time.sleep(5 * attempt)
+    return False
+
+
+def _upload_experiment_inputs(pod_id: str, experiment: dict) -> bool:
+    """Upload character.jpg + motion_src.mp4, skipping any already landed."""
+    ready = proxy_fetch(pod_id, "ready", timeout=15, port=8001) or b""
+    ok = True
+    if b"character.jpg" not in ready:
+        ok = _put_file(pod_id, experiment["image"], "character.jpg") and ok
+    if b"motion_src" not in ready:
+        ok = _put_file(pod_id, experiment["motion"], "motion_src.mp4") and ok
+    if not ok:
+        return False
+    ready = proxy_fetch(pod_id, "ready", timeout=15, port=8001) or b""
+    return b"character.jpg" in ready and b"motion_src" in ready
 
 
 def _state() -> dict:
@@ -231,13 +282,39 @@ def _try_rent(mutation: str, field: str) -> dict | None:
         raise
 
 
-def launch(role: str) -> str:
-    cfg = ROLES[role]
-    docker_args = (
-        "bash -lc 'cd /workspace && "
+# Experiment-mode env: the pod trims the uploaded video to this window and runs
+# a single high-quality gguf-14B generation. Kept here so launch() and tests
+# share one source of truth.
+EXPERIMENT_ENV = {
+    "MM_EXPERIMENT": "1",
+    "MM_TRIM_START": "3.0",
+    "MM_TRIM_SECONDS": "5.0",
+    "MM_FRAMES": "81",
+    "MM_STEPS": "50",
+    "MM_RESOLUTION": "480x832",
+}
+
+
+def _docker_args(experiment: dict | None) -> str:
+    prefix = ""
+    if experiment is not None:
+        env = {
+            **EXPERIMENT_ENV,
+            "MM_IMAGE_SHA256": experiment["image_sha"],
+            "MM_VIDEO_SHA256": experiment["video_sha"],
+        }
+        prefix = "export " + " ".join(f"{k}={v}" for k, v in env.items()) + " && "
+    return (
+        "bash -lc '" + prefix + "cd /workspace && "
         f"git clone --depth 1 -b {BRANCH} {REPO_URL} repo && "
         "bash repo/runpod-validation/pod_bootstrap.sh'"
     )
+
+
+def launch(role: str, experiment: dict | None = None) -> str:
+    cfg = ROLES[role]
+    docker_args = _docker_args(experiment)
+    ports = "8000/http,8001/http" if experiment is not None else "8000/http"
     # The stock API reports GPU-level availability, but our RAM/disk filters
     # can exhaust a pool that looks "High" — so iterate every candidate GPU,
     # trying on-demand first (a spot reclaim mid-run restarts the whole
@@ -255,7 +332,7 @@ def launch(role: str) -> str:
             volumeInGb: 0
             minMemoryInGb: {cfg["min_ram_gb"]}
             dockerArgs: {json.dumps(docker_args)}
-            ports: "8000/http"
+            ports: {json.dumps(ports)}
         """
         pod = _try_rent(
             f"mutation {{ podFindAndDeployOnDemand(input: {{ {common_fields} }}) "
@@ -343,6 +420,11 @@ def fetch_evidence(pod_id: str, role: str) -> None:
             "evidence/smoke/vace/wan-1.3b-vace/result.mp4",
             "evidence/smoke/vace-14b-gguf/wan-14b-vace-gguf/result.mp4",
             "evidence/smoke/vace-14b/wan-14b-vace/result.mp4",
+            # Experiment-mode outputs (MM_EXPERIMENT=1). The pipeline writes
+            # generated.mp4; the conditioning skeleton is the diagnosis artifact.
+            "evidence/smoke/experiment.json",
+            "evidence/smoke/experiment/wan-14b-vace-gguf/generated.mp4",
+            "evidence/smoke/experiment/wan-14b-vace-gguf/conditioning_pose.mp4",
         ]
     got = 0
     for path in dict.fromkeys(paths):  # dedupe, keep order
@@ -378,7 +460,7 @@ def our_spend(state: dict) -> float:
     return total
 
 
-def run(role: str, attach_pod_id: str | None = None) -> int:
+def run(role: str, attach_pod_id: str | None = None, experiment: dict | None = None) -> int:
     cfg = ROLES[role]
     if attach_pod_id:
         pod_id = attach_pod_id
@@ -386,9 +468,10 @@ def run(role: str, attach_pod_id: str | None = None) -> int:
             sys.exit(f"refusing to attach to {pod_id}: not created by this orchestrator")
         print(f"attached to existing pod {pod_id}")
     else:
-        pod_id = launch(role)
+        pod_id = launch(role, experiment=experiment)
     exit_code = 1
     retried = False
+    uploaded = experiment is None  # nothing to upload in the default matrix
     try:
         started = (
             _state()["pods"][pod_id]["launched_at"] if attach_pod_id else time.time()
@@ -441,10 +524,11 @@ def run(role: str, attach_pod_id: str | None = None) -> int:
                         print("retrying once with a fresh pod")
                         terminate(pod_id)
                         retried = True
-                        pod_id = launch(role)
+                        pod_id = launch(role, experiment=experiment)
                         started, first_beat = time.time(), None
                         last_beat_value, last_beat_change = None, time.time()
                         null_runtime_polls = 0
+                        uploaded = experiment is None
                         continue
                     print("already retried — giving up")
                     return 5
@@ -453,9 +537,10 @@ def run(role: str, attach_pod_id: str | None = None) -> int:
                     if not retried:
                         terminate(pod_id)
                         retried = True
-                        pod_id = launch(role)
+                        pod_id = launch(role, experiment=experiment)
                         started, first_beat = time.time(), None
                         last_beat_value, last_beat_change = None, time.time()
+                        uploaded = experiment is None
                         continue
                     return 5
                 continue
@@ -484,6 +569,14 @@ def run(role: str, attach_pod_id: str | None = None) -> int:
                     mins = (now - started) / 60
                     print(f"[{mins:5.1f}m ${spent:4.2f}] phase: {last_phase}  "
                           f"failures: {len(status.get('failures', []))}")
+                # Experiment inputs are uploaded once the pod's receiver is up
+                # (the await-inputs phase). Retried each poll until confirmed.
+                if not uploaded and status.get("phase") == "await-inputs":
+                    if _upload_experiment_inputs(pod_id, experiment):
+                        uploaded = True
+                        print("experiment inputs uploaded + confirmed on pod")
+                    else:
+                        print("upload incomplete; retrying next poll")
                 if status.get("done"):
                     print("pod reports DONE — fetching evidence")
                     fetch_evidence(pod_id, role)
@@ -513,6 +606,10 @@ def main() -> int:
     sub.add_parser("preflight")
     p_run = sub.add_parser("run")
     p_run.add_argument("--role", choices=("vace",), default="vace")
+    p_run.add_argument("--experiment", action="store_true",
+                       help="Quality experiment: upload --image/--motion, run gguf-14B 81f/50steps.")
+    p_run.add_argument("--image", type=Path, help="Character image (experiment mode).")
+    p_run.add_argument("--motion", type=Path, help="Reference motion video (experiment mode).")
     p_att = sub.add_parser("attach")
     p_att.add_argument("--role", choices=("vace",), default="vace")
     p_att.add_argument("--pod-id", required=True)
@@ -527,7 +624,20 @@ def main() -> int:
         return 0
     if args.cmd == "attach":
         return run(args.role, attach_pod_id=args.pod_id)
-    return run(args.role)
+    experiment = None
+    if args.experiment:
+        if not (args.image and args.motion):
+            sys.exit("--experiment requires --image and --motion")
+        if not args.image.exists() or not args.motion.exists():
+            sys.exit(f"input not found: {args.image} / {args.motion}")
+        print(f"experiment mode: hashing {args.image.name} + {args.motion.name}")
+        experiment = {
+            "image": args.image,
+            "motion": args.motion,
+            "image_sha": _sha256(args.image),
+            "video_sha": _sha256(args.motion),
+        }
+    return run(args.role, experiment=experiment)
 
 
 if __name__ == "__main__":

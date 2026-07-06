@@ -63,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
             cache_dir=args.cache_dir,
             resolution=args.resolution,
             frames=args.frames,
+            steps=args.steps,
             density=args.density,
             seed=args.seed,
         )
@@ -79,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
             "motion": str(args.motion),
             "resolution": args.resolution,
             "frames": args.frames,
+            "steps": args.steps,
             "density": args.density,
         },
         "results": [asdict(result) for result in results],
@@ -104,6 +106,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--report", type=Path, default=Path("outputs/v02a-smoke/report.json"))
     parser.add_argument("--resolution", default="832x480")
     parser.add_argument("--frames", type=int, default=17)
+    parser.add_argument("--steps", type=int, default=30, help="Denoising steps (1-200).")
     parser.add_argument("--density", type=int, default=256)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
@@ -148,6 +151,7 @@ def _run_backend(
     cache_dir: Path | None,
     resolution: str,
     frames: int,
+    steps: int,
     density: int,
     seed: int,
 ) -> SmokeResult:
@@ -165,6 +169,7 @@ def _run_backend(
             cache_dir=cache_dir,
             resolution=resolution,
             frames=frames,
+            steps=steps,
             density=density,
             device="cuda" if torch.cuda.is_available() else "cpu",
         )
@@ -216,6 +221,7 @@ def _build_config(
     cache_dir: Path | None,
     resolution: str,
     frames: int,
+    steps: int,
     density: int,
     device: str,
 ) -> MotionMirrorConfig:
@@ -226,6 +232,7 @@ def _build_config(
         backend=backend,
         resolution=resolution,
         num_frames=frames,
+        num_inference_steps=steps,
         trajectory_density=density,
         offload_model=True,
         t5_cpu=True,

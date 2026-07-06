@@ -42,6 +42,7 @@ class MotionMirrorConfig:
 
     resolution: str = "832x480"  # WxH string
     num_frames: int = 81         # 81 frames = ~5 s at 16 fps
+    num_inference_steps: int = 30  # denoising steps; higher = sharper, slower
     device: str = "cuda"         # "cuda" | "cpu"
 
     # VRAM optimization flags (v0.2a)
@@ -77,6 +78,11 @@ class MotionMirrorConfig:
         if self.num_frames < 1:
             raise ValueError(
                 f"num_frames must be >= 1, got {self.num_frames}"
+            )
+        if not 1 <= self.num_inference_steps <= 200:
+            raise ValueError(
+                f"num_inference_steps must be in [1, 200], got "
+                f"{self.num_inference_steps}"
             )
 
         # Validate Literal-typed / enumerated string fields against their

@@ -12,8 +12,17 @@ def test_defaults():
     assert c.backend == "wan-1.3b-vace"
     assert c.resolution == "832x480"
     assert c.num_frames == 81
+    assert c.num_inference_steps == 30
     assert c.device == "cuda"
     assert c.output_dir_name == "outputs"
+
+
+def test_num_inference_steps_validation():
+    assert MotionMirrorConfig(num_inference_steps=50).num_inference_steps == 50
+    with pytest.raises(ValueError):
+        MotionMirrorConfig(num_inference_steps=0)
+    with pytest.raises(ValueError):
+        MotionMirrorConfig(num_inference_steps=201)
 
 
 def test_output_dir():

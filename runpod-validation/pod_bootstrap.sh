@@ -116,6 +116,125 @@ if ! python3 -c "import torch; assert torch.cuda.is_available(), 'CUDA gone afte
 fi
 python3 -m pip freeze >$WS/evidence/pip-freeze.txt
 
+# --- phase: inputs ---
+# Default path fetches the pinned public sample. MM_EXPERIMENT=1 instead
+# receives the user's private media by direct upload (never committed to the
+# public repo) and trims it with the MM_TRIM_* window. Both paths converge on
+# inputs/character.jpg + inputs/motion.mp4.
+if [ "${MM_EXPERIMENT:-0}" = "1" ]; then
+  set_status await-inputs false
+  if ! python3 - <<'PY'
+import hashlib, http.server, os, pathlib, threading, time
+
+inputs = pathlib.Path("/workspace/inputs")
+inputs.mkdir(parents=True, exist_ok=True)
+targets = {
+    "/character.jpg": inputs / "character.jpg",
+    "/motion_src.mp4": inputs / "motion_src",
+}
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):  # keep the console quiet
+        pass
+
+    def do_PUT(self):
+        dest = targets.get(self.path)
+        if dest is None:
+            self.send_response(404); self.end_headers(); return
+        tmp = dest.parent / (dest.name + ".part")
+        length = int(self.headers.get("Content-Length", 0))
+        remaining = length
+        with open(tmp, "wb") as fh:
+            while remaining > 0:
+                chunk = self.rfile.read(min(1 << 20, remaining))
+                if not chunk:
+                    break
+                fh.write(chunk); remaining -= len(chunk)
+        if length > 0 and remaining == 0:
+            os.replace(tmp, dest)  # atomic: dest exists only once fully written
+            self.send_response(200); self.end_headers()
+        else:  # truncated / empty upload — discard so /ready never lists it
+            tmp.unlink(missing_ok=True)
+            self.send_response(500); self.end_headers()
+
+    def do_GET(self):
+        if self.path == "/ready":
+            landed = ",".join(sorted(p.name for p in targets.values() if p.exists()))
+            body = landed.encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers(); self.wfile.write(body)
+        else:
+            self.send_response(404); self.end_headers()
+
+srv = http.server.HTTPServer(("0.0.0.0", 8001), Handler)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+image, video = targets["/character.jpg"], targets["/motion_src.mp4"]
+deadline = time.time() + 30 * 60
+while time.time() < deadline:
+    if image.exists() and video.exists():
+        break
+    print("waiting for inputs...", flush=True)  # keeps the heartbeat fresh
+    time.sleep(30)
+else:
+    raise SystemExit("timed out waiting for uploaded inputs")
+srv.shutdown()
+
+def check(path, env):
+    want = os.environ.get(env, "")
+    got = hashlib.sha256(path.read_bytes()).hexdigest()
+    if want and want != got:
+        raise SystemExit(f"sha256 mismatch for {path.name}: got {got} want {want}")
+
+check(image, "MM_IMAGE_SHA256")
+check(video, "MM_VIDEO_SHA256")
+print("inputs received + sha256-verified")
+PY
+  then
+    record_failure "await-inputs upload/verify"
+    finish aborted-await-inputs
+  fi
+
+  set_status transcode-inputs false
+  if ! python3 - <<'PY'
+import os, pathlib, shutil, subprocess
+
+inputs = pathlib.Path("/workspace/inputs")
+video_src = inputs / "motion_src"
+out = inputs / "motion.mp4"
+start = os.environ.get("MM_TRIM_START", "3.0")
+dur = os.environ.get("MM_TRIM_SECONDS", "5.0")
+base = ["-y", "-ss", str(start), "-t", str(dur), "-i", str(video_src), "-an"]
+cmds = []
+ff = shutil.which("ffmpeg")
+if ff:
+    cmds.append([ff, *base, "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out)])
+    cmds.append([ff, *base, "-c:v", "mpeg4", "-q:v", "3", str(out)])
+sff = shutil.which("static_ffmpeg")
+if sff:
+    cmds.append([sff, *base, "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out)])
+    cmds.append([sff, *base, "-c:v", "mpeg4", "-q:v", "3", str(out)])
+for cmd in cmds:
+    if subprocess.run(cmd).returncode == 0 and out.exists() and out.stat().st_size > 0:
+        break
+else:
+    raise SystemExit("all transcode attempts failed")
+
+import cv2
+cap = cv2.VideoCapture(str(out))
+ok, _ = cap.read()
+n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+cap.release()
+if not ok or n < 17:
+    raise SystemExit(f"transcoded motion.mp4 unreadable or too short ({n} frames)")
+print(f"experiment input ready: motion.mp4 {n} frames")
+PY
+  then
+    record_failure "experiment transcode"
+    finish aborted-experiment-transcode
+  fi
+else
 # --- phase: samples (ABORT on integrity failure) ---
 set_status samples false
 if ! python3 - <<'PY'
@@ -170,6 +289,7 @@ then
   record_failure "sample fetch/verify/transcode"
   finish aborted-samples
 fi
+fi  # end MM_EXPERIMENT input branch
 
 # --- model downloads + smoke matrix (interleaved; failure skips dependents) ---
 # NB: do not name this GROUPS — bash's special GROUPS array silently ignores
@@ -208,35 +328,50 @@ run_smoke() { # run_smoke <name> <backend> [extra args...]
   local name=$1 backend=$2; shift 2
   set_status "smoke-$name" false
   python3 "$SMOKE" --image "$IMAGE" --motion "$MOTION" --backend "$backend" \
-    --cache-dir $WS/mm-cache --frames 17 --density 256 \
+    --cache-dir $WS/mm-cache \
     --output-dir "$WS/evidence/smoke/$name" --report "$WS/evidence/smoke/$name.json" \
     "$@" || record_failure "smoke-$name"
 }
 
-# (1) regression guard: 1.3B VACE on the already-validated backend.
-download_group dwpose
-download_group vace
-if group_ok dwpose && group_ok vace; then
-  run_smoke vace wan-1.3b-vace
+if [ "${MM_EXPERIMENT:-0}" = "1" ]; then
+  # Quality experiment: only dwpose + the gguf-14B backend, then a single
+  # full-length high-step run on the uploaded inputs.
+  echo "experiment matrix: dwpose + vace-14b-gguf -> single wan-14b-vace-gguf run"
+  download_group dwpose
+  download_group vace-14b-gguf
+  if group_ok dwpose && group_ok vace-14b-gguf; then
+    run_smoke experiment wan-14b-vace-gguf \
+      --frames "${MM_FRAMES:-81}" --steps "${MM_STEPS:-50}" \
+      --resolution "${MM_RESOLUTION:-480x832}" --density "${MM_DENSITY:-256}"
+  else
+    record_failure "skip smoke-experiment (missing models)"
+  fi
 else
-  record_failure "skip smoke-vace (missing models)"
-fi
+  # (1) regression guard: 1.3B VACE on the already-validated backend.
+  download_group dwpose
+  download_group vace
+  if group_ok dwpose && group_ok vace; then
+    run_smoke vace wan-1.3b-vace --frames 17 --density 256
+  else
+    record_failure "skip smoke-vace (missing models)"
+  fi
 
-# (2) gguf 14B BEFORE the full 14B download — the full transformer cache does
-#     not exist yet, so this covers the gguf resolver's base-cache fallback.
-download_group vace-14b-gguf
-if group_ok dwpose && group_ok vace-14b-gguf; then
-  run_smoke vace-14b-gguf wan-14b-vace-gguf
-else
-  record_failure "skip smoke-vace-14b-gguf (missing models)"
-fi
+  # (2) gguf 14B BEFORE the full 14B download — the full transformer cache does
+  #     not exist yet, so this covers the gguf resolver's base-cache fallback.
+  download_group vace-14b-gguf
+  if group_ok dwpose && group_ok vace-14b-gguf; then
+    run_smoke vace-14b-gguf wan-14b-vace-gguf --frames 17 --density 256
+  else
+    record_failure "skip smoke-vace-14b-gguf (missing models)"
+  fi
 
-# (3) full 14B VACE.
-download_group vace-14b
-if group_ok dwpose && group_ok vace-14b; then
-  run_smoke vace-14b wan-14b-vace
-else
-  record_failure "skip smoke-vace-14b (missing models)"
+  # (3) full 14B VACE.
+  download_group vace-14b
+  if group_ok dwpose && group_ok vace-14b; then
+    run_smoke vace-14b wan-14b-vace --frames 17 --density 256
+  else
+    record_failure "skip smoke-vace-14b (missing models)"
+  fi
 fi
 
 finish "done"

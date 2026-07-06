@@ -31,6 +31,27 @@ def test_is_stalled_boundaries():
     assert orch.is_stalled(1000.0, 1000.0 + threshold + 0.1, threshold) is True
 
 
+def test_docker_args_default_has_no_experiment_exports():
+    orch = _load_orchestrate_module()
+    args = orch._docker_args(None)
+    assert "MM_EXPERIMENT" not in args
+    assert "pod_bootstrap.sh" in args
+
+
+def test_docker_args_experiment_exports_env_and_shas():
+    orch = _load_orchestrate_module()
+    exp = {"image_sha": "aaa", "video_sha": "bbb", "image": None, "motion": None}
+    args = orch._docker_args(exp)
+    assert "export MM_EXPERIMENT=1" in args
+    assert "MM_IMAGE_SHA256=aaa" in args
+    assert "MM_VIDEO_SHA256=bbb" in args
+    assert "MM_FRAMES=81" in args
+    assert "MM_STEPS=50" in args
+    assert "MM_RESOLUTION=480x832" in args
+    # export prefix must precede the clone so the pod sees it.
+    assert args.index("export MM_EXPERIMENT=1") < args.index("git clone")
+
+
 def test_fmt_spend_per_hr_handles_none_and_values():
     orch = _load_orchestrate_module()
     # API returns null when no pods are running -> must not crash

@@ -152,6 +152,43 @@ def test_pose_zero_detection_midframe_yields_zeros(tmp_path, monkeypatch):
     assert np.all(result.keypoints[1][:, 2] == 0.0)
 
 
+def test_pose_drops_low_confidence_ghost_detection(tmp_path, monkeypatch):
+    # Frame 0: the real subject (conf 0.9) plus a YOLOX ghost box (conf 0.30).
+    # The ghost must be dropped so the single-person gate does not fire.
+    from motion_mirror.exceptions import MultiplePeopleDetectedError
+
+    vid = _make_video(tmp_path / "motion.mp4", frames=1)
+    cfg = _real_cfg(tmp_path)
+    real_xy, real_sc = _person(60, 60)          # strong, conf 0.9
+    ghost_xy, ghost_sc = _person(20, 20)
+    ghost_sc = np.full((133,), 0.30, dtype=np.float32)  # weak ghost
+    _install_fake_rtmlib(monkeypatch, [
+        (np.stack([real_xy, ghost_xy]), np.stack([real_sc, ghost_sc])),
+    ])
+    try:
+        result = extract_pose(vid, cfg)
+    except MultiplePeopleDetectedError:
+        raise AssertionError("ghost detection was not filtered before the count gate")
+    kept = result.keypoints[0]
+    centroid = kept[kept[:, 2] > 0.3, :2].mean(axis=0)
+    assert np.linalg.norm(centroid - np.array([60.0, 60.0])) < 15.0
+
+
+def test_pose_two_strong_people_still_raises(tmp_path, monkeypatch):
+    # Two genuine detections (both conf 0.9) must still trip the gate.
+    from motion_mirror.exceptions import MultiplePeopleDetectedError
+
+    vid = _make_video(tmp_path / "motion.mp4", frames=1)
+    cfg = _real_cfg(tmp_path)
+    a_xy, a_sc = _person(40, 40)
+    b_xy, b_sc = _person(100, 100)
+    _install_fake_rtmlib(monkeypatch, [
+        (np.stack([a_xy, b_xy]), np.stack([a_sc, b_sc])),
+    ])
+    with pytest.raises(MultiplePeopleDetectedError):
+        extract_pose(vid, cfg)
+
+
 def test_pose_tracks_nearest_person_when_order_swaps(tmp_path, monkeypatch):
     vid = _make_video(tmp_path / "motion.mp4", frames=2)
     cfg = _real_cfg(tmp_path)

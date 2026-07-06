@@ -163,6 +163,7 @@ def run(
     backend: Optional[str] = typer.Option(None, help="Backend: auto | wan-1.3b-vace | wan-14b-vace | wan-14b-vace-gguf | mock (14B backends GPU-unvalidated)."),
     resolution: Optional[str] = typer.Option(None, help="Output resolution WxH, e.g. 832x480."),
     frames: Optional[int] = typer.Option(None, help="Number of output frames."),
+    steps: Optional[int] = typer.Option(None, help="Denoising steps (1-200; higher = sharper, slower)."),
     density: Optional[int] = typer.Option(None, help="Trajectory density (512 = default, 1024 = HQ)."),
     device: Optional[str] = typer.Option(None, help="Compute device: cuda | cpu."),
     output_dir: Optional[Path] = typer.Option(None, help="Output directory (default: ./outputs)."),
@@ -180,6 +181,7 @@ def run(
         cfg_kwargs["backend"] = preset_data.get("backend", "wan-1.3b-vace")
         cfg_kwargs["resolution"] = preset_data.get("resolution", "832x480")
         cfg_kwargs["num_frames"] = preset_data.get("num_frames", 81)
+        cfg_kwargs["num_inference_steps"] = preset_data.get("num_inference_steps", 30)
         cfg_kwargs["trajectory_density"] = preset_data.get("trajectory_density", 512)
         cfg_kwargs["device"] = preset_data.get("device", "cuda")
         if "offload_model" in preset_data:
@@ -199,6 +201,8 @@ def run(
         cfg_kwargs["resolution"] = resolution
     if frames is not None:
         cfg_kwargs["num_frames"] = frames
+    if steps is not None:
+        cfg_kwargs["num_inference_steps"] = steps
     if density is not None:
         cfg_kwargs["trajectory_density"] = density
     if device is not None:

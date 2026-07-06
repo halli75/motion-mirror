@@ -445,6 +445,18 @@ def test_vace_real_path_calls_vace_pipeline(tmp_path):
     assert len(call["mask"]) == 5
     assert len(call["reference_images"]) == 1
     assert call["num_frames"] == 5
+    # Default steps flow through to the pipe call.
+    assert call["num_inference_steps"] == 30
+
+
+def test_vace_pipe_receives_configured_inference_steps(tmp_path):
+    req, cfg = _vace_pipeline_request(tmp_path, num_inference_steps=42)
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        generate_with_vace(req, cfg)
+
+    call = FakePipe.last_instance.calls[0]
+    assert call["num_inference_steps"] == 42
 
 
 def test_vace_offload_model_enables_sequential_cpu_offload(tmp_path):

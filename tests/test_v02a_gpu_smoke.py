@@ -28,6 +28,7 @@ def test_build_config_uses_supported_motion_mirror_config_fields(tmp_path):
         cache_dir=tmp_path / "cache",
         resolution="832x480",
         frames=17,
+        steps=50,
         density=256,
         device="cpu",
     )
@@ -38,6 +39,7 @@ def test_build_config_uses_supported_motion_mirror_config_fields(tmp_path):
     assert cfg.cache_dir == tmp_path / "cache"
     assert cfg.backend == "wan-1.3b-vace"
     assert cfg.num_frames == 17
+    assert cfg.num_inference_steps == 50
     assert cfg.trajectory_density == 256
 
 

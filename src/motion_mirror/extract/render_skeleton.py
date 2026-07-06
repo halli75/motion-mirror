@@ -1,6 +1,7 @@
 """Render pose keypoints into conditioning videos for Wan VACE."""
 from __future__ import annotations
 
+import colorsys
 from pathlib import Path
 
 import cv2
@@ -8,12 +9,14 @@ import numpy as np
 
 from ..types import PoseSequence
 
-# VACE was trained on canonical OpenPose BODY-18 renders (controlnet_aux
-# draw_bodypose): 18 joints including a synthesized neck, a fixed limb
-# sequence, and a fixed 18-color palette, limbs drawn as filled ellipses then
-# dimmed to 0.6 before full-color joint circles. Anything else (the previous
-# COCO-17 render with custom colors) is out-of-distribution and the model
-# reproduces the control literally instead of using it as a pose hint.
+# VACE was trained on canonical OpenPose whole-body renders (controlnet_aux
+# draw_bodypose + draw_handpose + draw_facepose): 18 body joints including a
+# synthesized neck, a fixed limb sequence and 18-color palette (limbs drawn as
+# filled ellipses then dimmed to 0.6 before full-color joint circles); each
+# hand as 20 rainbow-colored bones + red joint dots; the face as white dots.
+# Anything else (a body-only render, or the older COCO-17 custom-color render)
+# is out-of-distribution — the model then reproduces the control literally, or
+# hallucinates the missing hands/face instead of following them.
 
 # OpenPose BODY-18 index <- COCO-17 index; -1 marks the synthesized neck
 # (midpoint of the two shoulders, confidence = min of both).
@@ -54,6 +57,34 @@ _PALETTE_RGB: tuple[tuple[int, int, int], ...] = (
 _PALETTE_BGR: tuple[tuple[int, int, int], ...] = tuple(
     (b, g, r) for (r, g, b) in _PALETTE_RGB
 )
+
+# COCO-WholeBody 133-keypoint layout: 0-16 body (mapped above), 17-22 feet
+# (unused — BODY-18 has no feet), 23-90 face (68 pts), 91-111 left hand,
+# 112-132 right hand (21 pts each).
+_FACE_SLICE = slice(23, 91)
+_LEFT_HAND_SLICE = slice(91, 112)
+_RIGHT_HAND_SLICE = slice(112, 133)
+
+# 21-point hand skeleton, 20 bones (controlnet_aux draw_handpose edge order).
+_HAND_EDGES: tuple[tuple[int, int], ...] = (
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (0, 9), (9, 10), (10, 11), (11, 12),
+    (0, 13), (13, 14), (14, 15), (15, 16),
+    (0, 17), (17, 18), (18, 19), (19, 20),
+)
+
+# Per-bone HSV rainbow, hsv_to_rgb(i/20, 1, 1) — stdlib colorsys matches
+# matplotlib.colors.hsv_to_rgb used by controlnet_aux. Stored BGR for cv2 so
+# the on-canvas color matches controlnet's RGB-canvas render visually.
+_HAND_EDGE_COLOURS_BGR: tuple[tuple[int, int, int], ...] = tuple(
+    (round(b * 255), round(g * 255), round(r * 255))
+    for (r, g, b) in (colorsys.hsv_to_rgb(i / 20.0, 1.0, 1.0) for i in range(20))
+)
+
+# Hand joint dots and face dots (BGR).
+_HAND_JOINT_BGR = (0, 0, 255)  # red
+_FACE_DOT_BGR = (255, 255, 255)  # white
 
 
 def render_skeleton_frames(
@@ -104,6 +135,14 @@ def render_skeleton_frames(
             cv2.circle(canvas, pt, joint_radius, colour, -1)
             drawn = True
 
+        # Hands + face at full brightness, after the dim (controlnet_aux
+        # draws hands/face on the already-dimmed body layer). Zero-conf
+        # keypoints (mock / undetected) are skipped by the threshold, so
+        # body-only sequences render exactly as before.
+        _draw_hand(canvas, frame_kps[_LEFT_HAND_SLICE], (src_w, src_h), (out_w, out_h), confidence_threshold)
+        _draw_hand(canvas, frame_kps[_RIGHT_HAND_SLICE], (src_w, src_h), (out_w, out_h), confidence_threshold)
+        _draw_face(canvas, frame_kps[_FACE_SLICE], (src_w, src_h), (out_w, out_h), confidence_threshold)
+
         if not drawn:
             cv2.circle(
                 canvas,
@@ -129,6 +168,46 @@ def _coco_to_openpose18(frame_kps: np.ndarray) -> np.ndarray:
     body[1, :2] = (l_sho[:2] + r_sho[:2]) / 2.0
     body[1, 2] = min(float(l_sho[2]), float(r_sho[2]))
     return body
+
+
+def _draw_hand(
+    canvas: np.ndarray,
+    hand_kps: np.ndarray,
+    src_wh: tuple[int, int],
+    out_wh: tuple[int, int],
+    threshold: float,
+) -> None:
+    """Draw one 21-point hand: rainbow bones (controlnet_aux draw_handpose)."""
+    src_w, src_h = src_wh
+    out_w, out_h = out_wh
+    for colour, (a, b) in zip(_HAND_EDGE_COLOURS_BGR, _HAND_EDGES):
+        if hand_kps[a][2] < threshold or hand_kps[b][2] < threshold:
+            continue
+        p0 = _scale_point(hand_kps[a][:2], src_w, src_h, out_w, out_h)
+        p1 = _scale_point(hand_kps[b][:2], src_w, src_h, out_w, out_h)
+        cv2.line(canvas, p0, p1, colour, thickness=2)
+    for kp in hand_kps:
+        if kp[2] < threshold:
+            continue
+        pt = _scale_point(kp[:2], src_w, src_h, out_w, out_h)
+        cv2.circle(canvas, pt, 4, _HAND_JOINT_BGR, thickness=-1)
+
+
+def _draw_face(
+    canvas: np.ndarray,
+    face_kps: np.ndarray,
+    src_wh: tuple[int, int],
+    out_wh: tuple[int, int],
+    threshold: float,
+) -> None:
+    """Draw the 68-point face as white dots (controlnet_aux draw_facepose)."""
+    src_w, src_h = src_wh
+    out_w, out_h = out_wh
+    for kp in face_kps:
+        if kp[2] < threshold:
+            continue
+        pt = _scale_point(kp[:2], src_w, src_h, out_w, out_h)
+        cv2.circle(canvas, pt, 3, _FACE_DOT_BGR, thickness=-1)
 
 
 def render_skeleton_conditioning_artifacts(

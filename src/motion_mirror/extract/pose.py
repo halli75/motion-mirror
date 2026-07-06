@@ -17,6 +17,14 @@ from ..types import PoseSequence
 
 _SUPPORTED_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
 
+# YOLOX emits low-confidence "ghost" detections (reflections, posters, partial
+# background figures) alongside the real subject. A detection whose mean
+# keypoint confidence is below this bar is treated as spurious and dropped
+# before the person-count gate — otherwise a single 0.3-mean phantom would trip
+# MultiplePeopleDetectedError on an otherwise clean single-person clip. Real
+# subjects measured 0.7-0.9 mean; ghosts 0.2-0.36.
+_MIN_DETECTION_CONFIDENCE = 0.4
+
 
 def _person_centroid(person_kps: np.ndarray) -> np.ndarray:
     """Centroid of confident keypoints (conf > 0.3), falling back to all."""
@@ -24,6 +32,22 @@ def _person_centroid(person_kps: np.ndarray) -> np.ndarray:
     if xy.size == 0:
         xy = person_kps[:, :2]
     return xy.mean(axis=0)
+
+
+def _drop_ghost_detections(kps_raw: np.ndarray) -> np.ndarray:
+    """Keep only confident detections; if all are weak, keep the strongest.
+
+    Never returns empty when given a non-empty input, so genuine-but-weak
+    single subjects still proceed (and are caught later by NoPose/SmallSubject
+    only if truly absent/tiny), while phantom boxes are removed.
+    """
+    if kps_raw.shape[0] <= 1:
+        return kps_raw
+    scores = kps_raw[:, :, 2].mean(axis=1)
+    strong = kps_raw[scores >= _MIN_DETECTION_CONFIDENCE]
+    if strong.shape[0] >= 1:
+        return strong
+    return kps_raw[[int(scores.argmax())]]
 
 
 def extract_pose(
@@ -135,7 +159,11 @@ def extract_pose(
                 "Run: motion-mirror download --model dwpose"
             )
 
-    backend_ep = "onnxruntime" if cfg.device == "cuda" else "cpu"
+    # rtmlib's `backend` selects the inference EP (onnxruntime/opencv/openvino);
+    # cpu-vs-cuda is carried by `device`. Passing "cpu" as the backend raises
+    # NotImplementedError — so always use the onnxruntime EP and let device pick
+    # the provider (CUDAExecutionProvider vs CPUExecutionProvider).
+    backend_ep = "onnxruntime"
 
     # Try Wholebody first (current API), fall back to legacy PoseTracker
     tracker = None
@@ -198,6 +226,8 @@ def extract_pose(
         if kps_raw.ndim == 2:
             kps_raw = kps_raw[np.newaxis]  # add person dim → (1, 133, 3)
 
+        # Drop spurious low-confidence detections before counting/selecting.
+        kps_raw = _drop_ghost_detections(kps_raw)
         num_people = kps_raw.shape[0]
 
         # ── Person-count validation (frame 0 only to avoid repeated errors) ──

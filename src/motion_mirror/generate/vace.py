@@ -244,7 +244,7 @@ def _generate_vace(
             height=height,
             width=width,
             num_frames=request.frames,
-            num_inference_steps=30,
+            num_inference_steps=config.num_inference_steps,
             guidance_scale=5.0,
             generator=generator,
         ).frames[0]

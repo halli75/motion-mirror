@@ -16,3 +16,5 @@ outputs/
 # runpod validation local artifacts
 runpod-validation/inputs/
 runpod-validation/.orchestrator-state.json
+runpod-validation/evidence/pod-vace/
+runpod-validation/evidence/pod-vace2/

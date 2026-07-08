@@ -59,7 +59,20 @@ SPEND_CAP_USD = 3.00
 # combined caches (~19 + ~24 + ~75 GB, HF-API-measured) plus image and margin.
 ROLES = {
     "vace": {
-        "gpus": ["NVIDIA GeForce RTX 3090", "NVIDIA GeForce RTX 4090"],
+        # Prefer stable Ampere/Ada datacenter cards first: RunPod's community
+        # RTX 4090 batch is currently on driver 580/CUDA13.0, where our cu128
+        # torch can't init CUDA (whole pool failed 2026-07-08). A6000/A40/3090
+        # -class cards are managed more conservatively and still on 570/CUDA12.8.
+        # 4090 kept last as a fallback. Avoid Blackwell (5090/RTX PRO/B200): new
+        # arch, 580 drivers, and cu128 lacks sm_120 support.
+        "gpus": [
+            "NVIDIA RTX A6000",
+            "NVIDIA A40",
+            "NVIDIA GeForce RTX 3090",
+            "NVIDIA GeForce RTX 3090 Ti",
+            "NVIDIA RTX 5000 Ada Generation",
+            "NVIDIA GeForce RTX 4090",
+        ],
         "disk_gb": 200,
         # 64 GB RAM: sequential offload keeps the full 14B's weights resident
         # in system RAM (bf16 transformer ~28 GB + UMT5 ~11 GB + VAE +
@@ -71,13 +84,20 @@ ROLES = {
     },
 }
 
+# The quality experiment only downloads dwpose + the gguf-14B group (~24 GB of
+# models) and runs gguf under model_cpu_offload (measured 17 GB VRAM, modest
+# RAM) — far lighter than the full-14B matrix. Relax disk/RAM so the lower-stock
+# stable GPUs above actually match (strict 200 GB/64 GB filters cause
+# SUPPLY_CONSTRAINT on all but the 4090 pool).
+EXPERIMENT_ROLE_OVERRIDES = {"disk_gb": 120, "min_ram_gb": 40}
+
 POLL_S = 30
 PROVISION_TIMEOUT_S = 15 * 60
 # RunPod community 4090s are a per-host driver lottery: 570/CUDA12.8 hosts run
 # our cu128 stack, 580/CUDA13.0 hosts fail torch CUDA init on the identical
 # stack (observed 2026-07-08, two in a row). Such a pod aborts in ~1.5 min for
 # ~$0.01, so recycle a fresh pod instead of giving up — bounded by this cap.
-MAX_CUDA_RETRIES = 6
+MAX_CUDA_RETRIES = 8
 # 30 min: the heartbeat only ticks while console.log is being written, and
 # the untested 75 GB 14B shard-load under offload can go legitimately silent
 # for longer than the old 15 min threshold.
@@ -317,7 +337,7 @@ def _docker_args(experiment: dict | None) -> str:
 
 
 def launch(role: str, experiment: dict | None = None) -> str:
-    cfg = ROLES[role]
+    cfg = {**ROLES[role], **(EXPERIMENT_ROLE_OVERRIDES if experiment else {})}
     docker_args = _docker_args(experiment)
     ports = "8000/http,8001/http" if experiment is not None else "8000/http"
     # The stock API reports GPU-level availability, but our RAM/disk filters

@@ -73,6 +73,11 @@ ROLES = {
 
 POLL_S = 30
 PROVISION_TIMEOUT_S = 15 * 60
+# RunPod community 4090s are a per-host driver lottery: 570/CUDA12.8 hosts run
+# our cu128 stack, 580/CUDA13.0 hosts fail torch CUDA init on the identical
+# stack (observed 2026-07-08, two in a row). Such a pod aborts in ~1.5 min for
+# ~$0.01, so recycle a fresh pod instead of giving up — bounded by this cap.
+MAX_CUDA_RETRIES = 6
 # 30 min: the heartbeat only ticks while console.log is being written, and
 # the untested 75 GB 14B shard-load under offload can go legitimately silent
 # for longer than the old 15 min threshold.
@@ -471,6 +476,7 @@ def run(role: str, attach_pod_id: str | None = None, experiment: dict | None = N
         pod_id = launch(role, experiment=experiment)
     exit_code = 1
     retried = False
+    cuda_retries = 0
     uploaded = experiment is None  # nothing to upload in the default matrix
     try:
         started = (
@@ -578,12 +584,27 @@ def run(role: str, attach_pod_id: str | None = None, experiment: dict | None = N
                     else:
                         print("upload incomplete; retrying next poll")
                 if status.get("done"):
+                    failures = status.get("failures", [])
+                    # Bad-driver pod (torch can't init CUDA): cheap, pre-generation
+                    # — recycle a fresh pod. NEVER retry an expensive smoke failure.
+                    cuda_bad = len(failures) == 1 and any("CUDA sanity" in f for f in failures)
+                    if cuda_bad and cuda_retries < MAX_CUDA_RETRIES:
+                        cuda_retries += 1
+                        print(f"pod GPU driver can't init CUDA — recycling fresh pod "
+                              f"({cuda_retries}/{MAX_CUDA_RETRIES})")
+                        terminate(pod_id)
+                        pod_id = launch(role, experiment=experiment)
+                        started, first_beat = time.time(), None
+                        last_beat_value, last_beat_change = None, time.time()
+                        last_phase, null_runtime_polls = "", 0
+                        uploaded = experiment is None
+                        continue
                     print("pod reports DONE — fetching evidence")
                     fetch_evidence(pod_id, role)
-                    exit_code = 0 if not status.get("failures") else 2
-                    if status.get("failures"):
+                    exit_code = 0 if not failures else 2
+                    if failures:
                         print("failures recorded on pod:")
-                        for f in status["failures"]:
+                        for f in failures:
                             print(f"  - {f}")
                     return exit_code
     finally:

@@ -93,6 +93,17 @@ except Exception as exc:
 open("/workspace/evidence/env.json", "w").write(json.dumps(info, indent=2))
 PY
 
+# Fast-fail a bad-driver pod BEFORE the ~10min pip install. RunPod's community
+# 4090 pool mixes 570/CUDA12.8 hosts (torch inits fine) with 580/CUDA13.0 (and
+# 48GB variant) hosts where torch.cuda.is_available() is False on the identical
+# stack. The base image torch already reflects the driver, so check now and
+# abort in ~30s instead of ~11min. The orchestrator recycles a fresh pod on
+# this failure (matches on "CUDA sanity").
+if ! python3 -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)"; then
+  record_failure "torch CUDA sanity check failed (bad pod driver)"
+  finish aborted-cuda-sanity
+fi
+
 # --- phase: pip install (ABORT on failure) ---
 set_status pip-install false
 python3 -m pip install -U pip >/dev/null 2>&1

@@ -13,8 +13,18 @@ dist/
 data/
 outputs/
 
-# runpod validation local artifacts
+# internal working notes — not for the public repo
+tasks/
+handoff.md
+
+# runpod validation local artifacts (evidence, uploads, state)
 runpod-validation/inputs/
 runpod-validation/.orchestrator-state.json
-runpod-validation/evidence/pod-vace/
-runpod-validation/evidence/pod-vace2/
+runpod-validation/evidence/
+
+# test / generated media must never be committed
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.gif

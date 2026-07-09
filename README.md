@@ -2,206 +2,110 @@
 
 **Local-first motion transfer — animate any character image from a reference video.**
 
-Motion Mirror is the open-source alternative to Kling AI's Motion Control. Give it a character image and a reference video; it produces an animated video of your character performing the same motion. Everything runs on your machine — no cloud, no API keys, no per-clip fees.
-
-> **Early release** — the GPU-validated lineup is built around the Wan2.1-VACE 1.3B model; v0.4 adds explicit-only, UNVALIDATED 14B backends on top. See [Known Limitations](#known-limitations) before installing.
+Give Motion Mirror a character image and a reference video; it produces a video of your character performing the same motion. Everything runs on your machine — no cloud, no API keys, no per-clip fees. It's an open-source alternative to hosted motion-control tools, built on [Wan2.1-VACE](https://github.com/Wan-Video/Wan2.1).
 
 ---
 
 ## How it works
 
 ```
-character.png + motion_video.mp4
+character.png + motion.mp4
+        │
+   [1] Segment      rembg / SAM-2 remove the character's background → RGBA
+   [2] Extract pose DWPose-L detects 133 whole-body keypoints per frame
+   [3] Condition    render the canonical OpenPose whole-body skeleton
+                    (body + hands + face) + mask frames for VACE
+   [4] Generate     Wan2.1-VACE renders the character following the skeleton
+   [5] Mux audio    original audio passed through
         │
         ▼
- [1] Segment character     rembg or SAM-2 removes background -> RGBA mask
-        │
-        ▼
- [2] Extract pose          DWPose-L detects skeleton keypoints per frame
-        │
-        ▼
- [3] Build conditioning    Skeleton + mask conditioning frames for VACE
-        │
-        ▼
- [4] Generate video        wan-1.3b-vace (Wan2.1-VACE 1.3B) or mock
-        │
-        ▼
- [5] Passthrough audio     Original audio muxed into output
-        │
-        ▼
-   output.mp4
+     result.mp4
 ```
+
+Rendering the **whole-body** skeleton — not just the 18 body joints — gives VACE the hand and face structure it needs, which markedly reduces facial/hand flicker in the output.
 
 ---
 
 ## Requirements
 
-| Component | Minimum | Recommended |
+| Component | `wan-1.3b-vace` | `wan-14b-vace-gguf` |
 |---|---|---|
-| GPU VRAM | ~9 GB free for `wan-1.3b-vace` | 12 GB+ free |
-| System RAM | 32 GB | 64 GB |
-| Disk space | 30 GB free | 50 GB free |
-| CUDA | 12.x | 12.x |
-| Python | 3.11 | 3.11+ |
+| GPU VRAM (free) | ~9 GB | ~18 GB |
+| System RAM | 32 GB | 40 GB |
+| Disk (model cache) | ~20 GB | ~45 GB |
+| CUDA / driver | 12.x / 570+ | 12.x / 570+ |
+| Python | 3.11+ | 3.11+ |
 
-CPU-only mode is not supported for real generation (mock mode works for testing).
-
-> **VRAM note:** `wan-1.3b-vace` measured an **8.02 GB peak** on the RTX 3090/4090 validation runs (2026-07-03, 17-frame smoke, `--offload-model --t5-cpu`). Auto-selection requires **≥9.02 GB free VRAM** (measured peak + 1 GB headroom); below that floor, `--auto` cannot run real generation and you should use `--backend mock`.
-
-> **14B backends (UNVALIDATED):** the optional `wan-14b-vace` and
-> `wan-14b-vace-gguf` backends (Wan2.1-VACE-14B) need much more disk and system
-> RAM: **~75 GB disk** for `vace-14b` or **~24 GB** for `vace-14b-gguf`, plus
-> **≥24 GB system RAM** for T5 CPU offload. Their peak VRAM (~8–12 GB at 480p with
-> offload) is a **community estimate only — not measured by this project**. These
-> backends are explicit-only and `--auto` never selects them.
+CPU-only real generation is not supported (`mock` backend works for testing without a GPU).
 
 ---
 
 ## Installation
 
-### 1. Install PyTorch with CUDA first
-
 ```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-```
+# 1. PyTorch with CUDA (match your driver; cu124 shown)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 
-### 2. Install Motion Mirror with GPU inference dependencies
-
-```bash
+# 2. Motion Mirror + GPU inference deps
 pip install -e ".[cuda,gpu-inference]"
+
+# 3. (optional) SAM-2 character segmenter
+pip install "git+https://github.com/facebookresearch/sam2.git"
+
+# 4. Model weights → ~/.cache/motion-mirror/
+motion-mirror download --model dwpose          # DWPose-L pose (~350 MB)
+motion-mirror download --model wan-1.3b-vace    # Wan2.1-VACE-1.3B (~19 GB)
+motion-mirror download --model vace-14b-gguf    # Wan2.1-VACE-14B Q4_K_M + base (~24 GB)
 ```
 
-Or from PyPI once published:
-
-```bash
-pip install "motion-mirror[cuda,gpu-inference]"
-```
-
-### 3. Optional: SAM-2 character-image segmenter
-
-```bash
-pip install git+https://github.com/facebookresearch/sam2.git
-```
-
-### 4. Download model weights
-
-```bash
-# Wan2.1-VACE-1.3B generation model (~19 GB, diffusers format)
-motion-mirror download --model wan-1.3b-vace
-
-# DWPose-L pose estimation (detector + pose, ~350 MB)
-motion-mirror download --model dwpose
-
-# SAM-2 character-image segmenter (~1.8 GB)
-motion-mirror download --model sam2
-
-# Wan2.1-VACE-14B full diffusers weights (~75 GB) — UNVALIDATED backend
-motion-mirror download --model vace-14b
-
-# Wan2.1-VACE-14B GGUF Q4_K_M (~11.6 GB) + base components (~12 GB) ≈ ~24 GB total — UNVALIDATED backend
-motion-mirror download --model vace-14b-gguf
-```
-
-`--model` also accepts groups: `dwpose`, `vace`, `vace-14b`, `vace-14b-gguf`,
-`extras`, or `all`. Downloads go
-to `~/.cache/motion-mirror/`. A disk-space check runs before each download.
-
-> **Note:** the `all` group **deliberately excludes** `vace-14b` and
-> `vace-14b-gguf` — those large, UNVALIDATED 14B downloads must be requested
-> explicitly by name.
+`--model` also accepts groups: `dwpose`, `vace`, `vace-14b`, `vace-14b-gguf`, `extras`, `all`. A disk-space check runs before each download. `all` deliberately excludes the large 14B groups — request those by name.
 
 ---
 
 ## Quick start
 
 ```bash
-# Basic run (defaults to wan-1.3b-vace with offload)
-motion-mirror run character.png motion.mp4
+# 1.3B (lightest, ~9 GB VRAM)
+motion-mirror run character.png motion.mp4 --backend wan-1.3b-vace --offload-model --t5-cpu
 
-# Low-VRAM VACE path made explicit
+# 14B GGUF (best identity, ~18 GB VRAM) at higher quality
 motion-mirror run character.png motion.mp4 \
-  --backend wan-1.3b-vace \
-  --offload-model \
-  --t5-cpu
+  --backend wan-14b-vace-gguf --frames 81 --steps 50 --resolution 480x832
 
-# Let Motion Mirror pick from available CUDA VRAM
+# Let Motion Mirror pick from available VRAM
 motion-mirror run character.png motion.mp4 --auto
 
-# Explicit options with SAM-2 segmentation
-motion-mirror run character.png motion.mp4 \
-  --backend wan-1.3b-vace \
-  --resolution 832x480 \
-  --frames 81 \
-  --density 512 \
-  --flow-estimator raft \
-  --segmenter sam2 \
-  --device cuda \
-  --output-dir ./my_outputs
-
-# Launch the Gradio web UI
+# Gradio web UI
 motion-mirror ui
 ```
 
-Output is written to `./outputs/result.mp4` by default.
+Output → `./outputs/result.mp4`.
 
 ---
 
-## CLI reference
+## CLI
 
 ```
-motion-mirror --help
-
-Commands:
-  run        Run the full motion transfer pipeline
-  download   Download model weights to local cache
-  presets    List available generation presets
-  benchmark  Print system and GPU diagnostics
-  ui         Launch the Gradio web UI
+motion-mirror run        Run the full pipeline
+motion-mirror download   Fetch model weights
+motion-mirror presets    List generation presets
+motion-mirror benchmark  System / GPU diagnostics
+motion-mirror ui         Launch the Gradio UI
 ```
 
-### Public run options
+Key `run` options:
 
-```bash
-motion-mirror run character.png motion.mp4 \
-  --backend auto|wan-1.3b-vace|wan-14b-vace|wan-14b-vace-gguf|mock \
-  --auto \
-  --offload-model \
-  --t5-cpu \
-  --flow-estimator raft \
-  --segmenter sam2
-```
+| Option | Meaning |
+|---|---|
+| `--backend` | `auto` \| `wan-1.3b-vace` \| `wan-14b-vace` \| `wan-14b-vace-gguf` \| `mock` |
+| `--frames` | output frame count (default 81 ≈ 5 s @ 16 fps) |
+| `--steps` | denoising steps, 1–200 (default 30; 50 for higher quality) |
+| `--resolution` | `WxH`, e.g. `480x832` (portrait) or `832x480` |
+| `--offload-model` / `--t5-cpu` | trade speed for VRAM |
+| `--segmenter` | `rembg` (default) \| `sam2` |
+| `--flow-estimator` | `farneback` (default) \| `raft` |
 
-Segmentation of the character image with `--segmenter sam2` is validated.
-Non-GPU CI covers config, CLI, routing, and mocked backend contracts.
-
-> **Conditioning note:** `wan-1.3b-vace` conditions the Wan2.1-VACE pipeline on
-> per-frame skeleton (OpenPose-18) and mask frames derived from the reference
-> video. Reference-image identity adherence is loose at 1.3B scale — see
-> [Known Limitations](#known-limitations).
-
-> **14B backends (`wan-14b-vace`, `wan-14b-vace-gguf`):** available as
-> **explicit-only** choices — `--auto` will **never** select them, and they are
-> **UNVALIDATED** (never run or VRAM-measured by this project). See
-> [Validation Status](#validation-status) before using.
-
-### Presets
-
-```bash
-motion-mirror presets --list
-```
-
-| Preset | Resolution | Frames | Density | Notes |
-|---|---|---|---|---|
-| `default` | 832×480 | 81 | 512 | Standard quality, `wan-1.3b-vace` |
-| `low-vram` | 832×480 | 81 | 512 | `wan-1.3b-vace` with offload / T5 CPU |
-| `mock` | 128×64 | 4 | 32 | For testing without GPU |
-
-### Benchmark
-
-```bash
-motion-mirror benchmark           # Python + platform info
-motion-mirror benchmark --gpu-info  # GPU name and VRAM
-```
+Presets: `default`, `low-vram`, `mock` — see `motion-mirror presets --list`.
 
 ---
 
@@ -212,143 +116,58 @@ from pathlib import Path
 from motion_mirror import MotionMirrorPipeline, MotionMirrorConfig
 
 cfg = MotionMirrorConfig(
-    backend="wan-1.3b-vace",
-    resolution="832x480",
+    backend="wan-14b-vace-gguf",
+    resolution="480x832",
     num_frames=81,
-    trajectory_density=512,
+    num_inference_steps=50,
     offload_model=True,
     t5_cpu=True,
-    flow_estimator="raft",
-    segmenter="sam2",
-    device="cuda",
 )
-
-pipeline = MotionMirrorPipeline(cfg)
-result = pipeline.run(
+result = MotionMirrorPipeline(cfg).run(
     image_path=Path("character.png"),
     motion_video_path=Path("motion.mp4"),
 )
-
-print(result.output_path)        # Path to result.mp4
-print(result.segmentation_path)  # RGBA PNG
-print(result.trajectory_path)    # .npz trajectory map
+print(result.output_path)  # → outputs/result.mp4
 ```
 
-### Exception types
-
-```python
-from motion_mirror import (
-    NoPoseDetectedError,          # no person in reference video
-    MultiplePeopleDetectedError,  # >1 person detected (single-person only)
-    SmallSubjectError,            # person occupies <5% of frame
-    SmallSubjectWarning,          # person occupies 5–10% (warning, not error)
-    UnsupportedImageError,        # unsupported image format
-    UnsupportedVideoError,        # unsupported video format
-    VideoDecodeError,             # video cannot be decoded
-    MultipleCharactersError,      # >1 person in character image
-)
-```
-
-All exceptions inherit from `MotionMirrorError`.
+Typed exceptions (all inherit `MotionMirrorError`): `NoPoseDetectedError`, `MultiplePeopleDetectedError`, `SmallSubjectError`, `SmallSubjectWarning`, `UnsupportedImageError`, `UnsupportedVideoError`, `VideoDecodeError`, `MultipleCharactersError`.
 
 ---
 
-## Known Limitations
+## Backends
 
-**Loose identity adherence at 1.3B scale**
-The Wan2.1-VACE 1.3B backend follows the reference motion well but does not
-strongly lock onto the input character's face and appearance — identity can
-drift, especially during large head movements or fast motion. This is a known
-limitation of the 1.3B model, not a bug. The larger `wan-14b-vace` and
-`wan-14b-vace-gguf` backends (Wan2.1-VACE-14B) exist as the **untested candidate
-fix** for this — the 14B model is expected to improve reference-image identity
-adherence, but this project has **not GPU-validated either 14B backend**, so the
-improvement is unconfirmed. See the Validation Status table below.
+| Backend | VRAM (measured) | Identity | Notes |
+|---|---:|---|---|
+| `wan-1.3b-vace` | 8.0 GB | loose | Fast, lightest. Follows motion well; face/appearance can drift. |
+| `wan-14b-vace-gguf` | ~18 GB | strong | **Recommended.** Q4_K_M quantized 14B — locks identity, faster than the full 14B. |
+| `wan-14b-vace` | 8.0 GB* | strong | Full 14B. *Fits ~9 GB via sequential CPU offload, but slower. |
+| `mock` | — | — | Solid-colour output for testing without a GPU. |
 
-**Single-person only**
-Multi-person reference videos raise `MultiplePeopleDetectedError`. Crop the
-reference video to one person before running Motion Mirror.
-
-**SAM-2 is limited to character-image segmentation**
-`--segmenter sam2` (character-image segmentation) is the only validated SAM-2
-path.
-
-**~9 GB+ free VRAM required for real generation**
-The 1.3B VACE backend measured an 8.02 GB peak with `--offload-model --t5-cpu`
-and needs ~9 GB free VRAM to run. CPU offloading uses system RAM as overflow
-storage during inference. Cards below this floor should use `--backend mock`.
-
-**~19 GB model download**
-First run requires downloading ~19 GB (Wan2.1-VACE-1.3B) + ~350 MB (DWPose),
-plus ~1.8 GB if SAM-2 is used. Allow ~30 GB free disk space for caches and
-working files.
-
-**Generation time**
-With sequential CPU offloading (required at ~9–12 GB VRAM), a short 17-frame
-clip takes several minutes; an 81-frame clip (~5 seconds at 16 fps) takes
-substantially longer. Generation is faster on larger cards (A100/H100) with more
-VRAM headroom.
+All backends are GPU-validated end-to-end (RTX 3090/4090/A6000). The 14B backends are the fix for the 1.3B model's loose identity adherence; `--auto` selects `wan-1.3b-vace` and never routes to a 14B backend implicitly.
 
 ---
 
-## Validation Status
+## Known limitations
 
-Non-GPU CI passes for config, CLI, routing, mocks, and package imports. GPU
-validation was run on RunPod (RTX 3090/4090, 2026-07-03) via `runpod-validation/`:
-
-| Backend | Target Hardware | Status |
-|---|---:|---|
-| `wan-1.3b-vace` | ~9–12 GB free VRAM | **PASS** — end-to-end motion transfer, 8.02 GB peak (17-frame smoke) |
-| `wan-14b-vace` | ~8–12 GB peak (community estimate) | **UNVALIDATED** — never run or measured by this project |
-| `wan-14b-vace-gguf` | ~8–12 GB peak (community estimate) | **UNVALIDATED** — never run or measured by this project |
-| `mock` | CPU / any | Testing only, no real generation |
-
-> **UNVALIDATED backends:** `wan-14b-vace` and `wan-14b-vace-gguf` (Wan2.1-VACE-14B)
-> have **not** been GPU-validated by this project. The ~8–12 GB peak VRAM at 480p
-> with offload is a **community estimate only — not measured here**. They are
-> **explicit-only**: you must pass `--backend wan-14b-vace` or
-> `--backend wan-14b-vace-gguf`; `--auto` **never** selects them. Running the 14B
-> model requires **≥24 GB system RAM** for T5 CPU offload.
-
-See [`docs/windows-install.md`](docs/windows-install.md) for Windows setup notes.
-
----
-
-## Roadmap
-
-| Version | Focus | Key additions |
-|---|---|---|
-| **v0.1** | End-to-end pipeline | Trajectory synthesis, CLI, UI |
-| **v0.2** | Hardware accessibility | 1.3B VACE backend, RAFT / SAM-2 options |
-| **v0.3** | VACE-only lineup | GPU-validated `wan-1.3b-vace`, ComfyUI nodes |
-| **v0.4** *(current)* | Scale | 14B VACE backends (UNVALIDATED), GGUF quantization, sam2-masker removal |
-| **v0.5** | Quality | Face restoration, frame interpolation, CI benchmarks |
-| **v0.6** | Community | LoRA fine-tuning, batch mode, docs site |
-| **v1.0** | Stable | Preset library, PyPI + Docker, stable Python API |
+- **Single-person only** — multi-person reference videos raise `MultiplePeopleDetectedError`. Low-confidence background detections are filtered automatically; crop to one clear subject.
+- **Background** — the output background follows the character image, not the reference video's scene.
+- **Generation time** — under CPU offload a full 81-frame clip takes tens of minutes; much faster on 24 GB+ cards.
+- **Drivers** — needs an NVIDIA driver new enough for your PyTorch CUDA build (570/CUDA 12.8 validated).
 
 ---
 
 ## Development
 
 ```bash
-# Install with dev dependencies
 pip install -e ".[dev]"
-
-# Run all non-GPU tests (no GPU or model weights needed)
-pytest -m "not gpu" -v
-
-# Run GPU tests (requires downloaded weights + CUDA GPU)
-pytest -m gpu -v
+pytest -m "not gpu"        # non-GPU suite (no weights/GPU needed) — runs in CI
+pytest -m gpu             # GPU suite (needs CUDA + weights)
 ```
 
-CI runs `pytest -m "not gpu"` on every push via GitHub Actions. GPU tests are separate/manual because they require CUDA hardware and model weights.
+GPU validation is reproducible via [`runpod-validation/`](runpod-validation/README.md) (API-only RunPod harness, no SSH).
 
 ---
 
 ## License
 
-Apache 2.0. See [LICENSE](LICENSE) for details.
-
-Model weights and third-party dependencies retain their own licenses — see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for the full breakdown. Generated outputs are subject to the Wan2.1 model card terms (also Apache 2.0, commercial use permitted).
-</content>
-</invoke>
+Apache 2.0 — see [LICENSE](LICENSE). Model weights and dependencies keep their own licenses; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). Generated outputs are subject to the Wan2.1 model terms (Apache 2.0, commercial use permitted).

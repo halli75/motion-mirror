@@ -384,6 +384,12 @@ else
   download_group vace
   if group_ok dwpose && group_ok vace; then
     run_smoke vace wan-1.3b-vace --frames 17 --density 256
+    # (1b) no-offload case: exercises the attention-slicing VRAM gate
+    # (vace.py:_needs_attention_slicing), which only skips slicing when
+    # offload_model=False and free VRAM clears the threshold. The rest of
+    # the matrix always runs with offload_model=True and never hits this
+    # branch, so this is the only smoke case that covers it.
+    run_smoke vace-no-offload wan-1.3b-vace --frames 17 --density 256 --no-offload-model
   else
     record_failure "skip smoke-vace (missing models)"
   fi

@@ -66,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
             steps=args.steps,
             density=args.density,
             seed=args.seed,
+            offload_model=args.offload_model,
         )
         for backend in args.backend
     ]
@@ -109,6 +110,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=30, help="Denoising steps (1-200).")
     parser.add_argument("--density", type=int, default=256)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--offload-model",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="CPU-offload the model during generation (default: on, matches the historical smoke matrix).",
+    )
     parser.add_argument(
         "--allow-cpu",
         action="store_true",
@@ -154,6 +161,7 @@ def _run_backend(
     steps: int,
     density: int,
     seed: int,
+    offload_model: bool = True,
 ) -> SmokeResult:
     start = time.perf_counter()
     output_path: Path | None = None
@@ -172,6 +180,7 @@ def _run_backend(
             steps=steps,
             density=density,
             device="cuda" if torch.cuda.is_available() else "cpu",
+            offload_model=offload_model,
         )
         result = MotionMirrorPipeline(cfg).run(image, motion)
         output_path = result.output_path
@@ -224,6 +233,7 @@ def _build_config(
     steps: int,
     density: int,
     device: str,
+    offload_model: bool = True,
 ) -> MotionMirrorConfig:
     """Build a config using only supported dataclass fields."""
     return MotionMirrorConfig(
@@ -234,7 +244,7 @@ def _build_config(
         num_frames=frames,
         num_inference_steps=steps,
         trajectory_density=density,
-        offload_model=True,
+        offload_model=offload_model,
         t5_cpu=True,
         device=device,
         cache_dir=cache_dir or MotionMirrorConfig().cache_dir,

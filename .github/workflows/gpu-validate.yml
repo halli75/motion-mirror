@@ -2,7 +2,7 @@
 #
 # Never runs per-PR: each press rents a real spot GPU (~$0.5-1.5) and spot
 # capacity is flaky, so this stays a deliberate button. Usable from the
-# Actions tab once this file is on the default branch (merge PR #7 first).
+# Actions tab.
 #
 # Requires the RUNPOD_API_KEY repository secret.
 name: GPU validate

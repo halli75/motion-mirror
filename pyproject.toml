@@ -8,6 +8,18 @@ version = "0.4.0a0"
 description = "Local-first motion transfer pipeline for animating a character image from a reference video."
 readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "halli75" }]
+keywords = ["motion-transfer", "video-generation", "wan2.1", "vace", "diffusion", "character-animation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Topic :: Multimedia :: Video",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
   "gradio>=5,<6",
   "typer>=0.12,<1",
@@ -47,6 +59,11 @@ gpu-inference = [
   "ftfy",
   "Pillow",
 ]
+
+[project.urls]
+Homepage = "https://github.com/halli75/motion-mirror"
+Repository = "https://github.com/halli75/motion-mirror"
+Issues = "https://github.com/halli75/motion-mirror/issues"
 
 [project.scripts]
 motion-mirror = "motion_mirror.cli:app"

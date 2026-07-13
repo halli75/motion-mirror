@@ -171,3 +171,7 @@ GPU validation is reproducible via [`runpod-validation/`](runpod-validation/READ
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE). Model weights and dependencies keep their own licenses; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). Generated outputs are subject to the Wan2.1 model terms (Apache 2.0, commercial use permitted).
+
+---
+
+Repo: [github.com/halli75/motion-mirror](https://github.com/halli75/motion-mirror) · [Issues](https://github.com/halli75/motion-mirror/issues)

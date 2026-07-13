@@ -113,17 +113,17 @@ license.
 - **Provider:** Alibaba / Wan-AI
 - **Use:** VACE generation backend for `wan-1.3b-vace` — the primary GPU-validated real generation backend.
 
-### Wan2.1-VACE-14B (optional, UNVALIDATED backend)
+### Wan2.1-VACE-14B (optional, GPU-validated backend)
 - **License:** Apache 2.0
 - **Source:** https://huggingface.co/Wan-AI/Wan2.1-VACE-14B-diffusers
 - **Provider:** Alibaba / Wan-AI
-- **Use:** VACE generation backend for `wan-14b-vace` (~75 GB). Explicit-only and not GPU-validated by this project.
+- **Use:** VACE generation backend for `wan-14b-vace` (~75 GB). Explicit-only — `--auto` never selects it.
 
-### Wan2.1-VACE-14B GGUF quantizations (optional, UNVALIDATED backend)
+### Wan2.1-VACE-14B GGUF quantizations (optional, GPU-validated backend)
 - **License:** Apache 2.0 (inherited from the Wan2.1-VACE-14B base model)
 - **Source:** https://huggingface.co/QuantStack/Wan2.1_14B_VACE-GGUF
 - **Provider:** Quantized and redistributed by QuantStack (base model by Alibaba / Wan-AI)
-- **Use:** GGUF Q4_K_M quantized weights for the `wan-14b-vace-gguf` backend. Explicit-only and not GPU-validated by this project.
+- **Use:** GGUF Q4_K_M quantized weights for the `wan-14b-vace-gguf` backend. Explicit-only — `--auto` never selects it.
 
 ### UMT5-XXL Text Encoder
 - **License:** Apache 2.0

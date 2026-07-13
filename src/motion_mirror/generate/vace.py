@@ -210,7 +210,7 @@ def _generate_vace(
         pipe.scheduler.config,
         flow_shift=flow_shift,
     )
-    if hasattr(pipe, "enable_attention_slicing"):
+    if hasattr(pipe, "enable_attention_slicing") and _needs_attention_slicing(config, device, torch):
         pipe.enable_attention_slicing(1)
     _apply_memory_policy(pipe, config, device, gguf=is_gguf)
 
@@ -354,6 +354,28 @@ def _resolve_device(config: MotionMirrorConfig, torch: object) -> str:
     if config.device == "cuda" and getattr(torch.cuda, "is_available", lambda: False)():
         return "cuda"
     return "cpu"
+
+
+_ATTENTION_SLICING_FREE_VRAM_FLOOR_BYTES = 20 * 1024**3
+
+
+def _needs_attention_slicing(config: MotionMirrorConfig, device: str, torch: object) -> bool:
+    """Whether to trade speed for memory via attention slicing.
+
+    Slicing is a flat speed tax with no benefit once VRAM isn't tight, so skip
+    it when the run isn't already relying on CPU offload and there's enough
+    free VRAM to be confident (floor set above the largest offload-mode peak
+    measured in runpod-validation evidence, 18.43 GB for GGUF-14B). Falls back
+    to slicing (today's behavior) for CPU/mock paths or if the VRAM query
+    fails, so detection uncertainty never silently changes behavior.
+    """
+    if config.offload_model or not device.startswith("cuda"):
+        return True
+    try:
+        free_bytes, _total_bytes = torch.cuda.mem_get_info()
+    except Exception:
+        return True
+    return free_bytes < _ATTENTION_SLICING_FREE_VRAM_FLOOR_BYTES
 
 
 def _apply_memory_policy(

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Strips AI-assistant attribution trailers from commit messages.
+# Enabled via: git config core.hooksPath .githooks  (see CONTRIBUTING.md)
+sed -i \
+  -e '/^[Cc]o-[Aa]uthored-[Bb]y:.*[Cc]laude/d' \
+  -e '/^[Cc]o-[Aa]uthored-[Bb]y:.*[Cc]ursor/d' \
+  -e '/^[Cc]o-[Aa]uthored-[Bb]y:.*[Cc]opilot/d' \
+  -e '/^[Cc]o-[Aa]uthored-[Bb]y:.*anthropic/d' \
+  -e '/^[Cc]o-[Aa]uthored-[Bb]y:.*[Oo]pen[Aa][Ii]/d' \
+  -e '/^[Cc]o-[Aa]uthored-[Bb]y:.*openclaude/d' \
+  -e '/Generated with.*[Cc]laude/d' \
+  -e '/🤖 Generated with/d' \
+  "$1"

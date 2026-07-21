@@ -26,7 +26,7 @@ motion-mirror download --model dwpose
 The suite is split by the `gpu` pytest marker:
 
 ```bash
-pytest -m "not gpu"     # fast suite — no GPU or weights needed; this is what CI runs
+pytest -m "not gpu"     # fast suite - no GPU or weights needed; this is what CI runs
 pytest -m gpu           # needs CUDA + downloaded weights
 ```
 
@@ -36,7 +36,7 @@ GPU-touching changes should also pass the relevant `pytest -m gpu` tests locally
 
 ## Making changes
 
-- Keep changes minimal and focused — one concern per PR.
+- Keep changes minimal and focused - one concern per PR.
 - Match the surrounding code style. Public functions get a one-line docstring.
 - Comments explain *why*, not *what*. Don't add comments that restate the code.
 - New backends, CLI flags, or config fields need tests in the non-GPU suite (mock what needs a GPU).

@@ -7,16 +7,16 @@ orchestrator polls it, pulls results, and always terminates the pods it created.
 
 ## Files
 
-- `orchestrate.py` — LOCAL. `preflight` → `run` → fetch evidence → `terminate`.
+- `orchestrate.py` - LOCAL. `preflight` → `run` → fetch evidence → `terminate`.
   Prefers stable Ampere/Ada datacenter GPUs, auto-recycles pods that can't init
   CUDA (a driver lottery on some community cards), and guards spend per-pod
   (`costPerHr × uptime`, never account-balance deltas).
-- `pod_bootstrap.sh` — runs ON the pod. Installs the pinned stack, downloads
+- `pod_bootstrap.sh` - runs ON the pod. Installs the pinned stack, downloads
   weights, and runs the smoke matrix. `MM_EXPERIMENT=1` switches to a single
   high-quality run on privately uploaded inputs.
-- `validate_inputs.py` — LOCAL. Picks CC-licensed smoke inputs, gates them with
+- `validate_inputs.py` - LOCAL. Picks CC-licensed smoke inputs, gates them with
   CPU DWPose (one person, large in frame), writes `samples.json`.
-- `samples.json` — the chosen public smoke inputs (URLs + sha256 + trim).
+- `samples.json` - the chosen public smoke inputs (URLs + sha256 + trim).
 
 ## Run
 
@@ -30,7 +30,7 @@ python runpod-validation/orchestrate.py run --experiment `
   --image character.jpg --motion motion.mp4
 ```
 
-The branch must be pushed first — pods `git clone -b` it.
+The branch must be pushed first - pods `git clone -b` it.
 
 ## Safety
 
@@ -38,5 +38,5 @@ The branch must be pushed first — pods `git clone -b` it.
 - Per-run spend guard + wall-clock cap salvage evidence before stopping.
 - Bad-driver pods fail fast (~30 s) and are recycled automatically.
 - Private `--experiment` inputs upload to the pod over an sha256-verified
-  channel and are never written to this (public) repo — pod evidence is
+  channel and are never written to this (public) repo - pod evidence is
   gitignored.

@@ -4,12 +4,12 @@ This directory is the Motion Mirror ComfyUI custom-node package.
 
 ## Nodes
 
-- `MotionMirrorPoseExtract` — runs DWPose extraction on the motion video and
+- `MotionMirrorPoseExtract` - runs DWPose extraction on the motion video and
   outputs a pose artifact path (`.npz`). CPU-capable.
-- `MotionMirrorTrajectoryGen` — loads the pose artifact, segments the character
+- `MotionMirrorTrajectoryGen` - loads the pose artifact, segments the character
   image, synthesizes the dense trajectory map, and outputs a trajectory
   artifact path (`.npz`). CPU-capable.
-- `MotionMirrorGenerate` — runs generation. Accepts optional `pose_path` and
+- `MotionMirrorGenerate` - runs generation. Accepts optional `pose_path` and
   `trajectory_path` inputs from the nodes above so extraction is not repeated;
   when omitted it runs the full pipeline end-to-end.
 

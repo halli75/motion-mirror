@@ -87,9 +87,9 @@ Add `--segmenter sam2` to exercise SAM-2 character-image segmentation.
 Two larger backends also exist: `wan-14b-vace` and `wan-14b-vace-gguf`
 (Wan2.1-VACE-14B). They are **explicit-only** (`--auto` never selects them) and
 are GPU-validated end-to-end (RTX 3090/A6000), but generation is slow under
-CPU offload — budget tens of minutes for a full clip. They require much larger
-downloads — `motion-mirror download --model vace-14b` (~75 GB) or
-`--model vace-14b-gguf` (~24 GB) — plus **≥24 GB system RAM** for T5 CPU
+CPU offload - budget tens of minutes for a full clip. They require much larger
+downloads - `motion-mirror download --model vace-14b` (~75 GB) or
+`--model vace-14b-gguf` (~24 GB) - plus **≥24 GB system RAM** for T5 CPU
 offload. Make sure the model cache drive has room before downloading.
 
 ## Troubleshooting

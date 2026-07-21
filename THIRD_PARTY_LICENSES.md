@@ -33,12 +33,12 @@ license.
 - **Source:** https://github.com/danielgatis/rembg
 - **Use:** Background removal (character segmentation)
 
-### Pillow (PIL) (optional — GPU path only)
-- **License:** Historical Permission Notice and Disclaimer (HPND) — effectively MIT-compatible
+### Pillow (PIL) (optional - GPU path only)
+- **License:** Historical Permission Notice and Disclaimer (HPND) - effectively MIT-compatible
 - **Source:** https://github.com/python-pillow/Pillow
 - **Use:** Image I/O and compositing
 
-### ftfy (optional — GPU path only)
+### ftfy (optional - GPU path only)
 - **License:** Apache 2.0
 - **Source:** https://github.com/rspeer/python-ftfy
 - **Use:** Text normalization for the UMT5 tokenizer
@@ -63,42 +63,42 @@ license.
 - **Source:** https://github.com/Textualize/rich
 - **Use:** Terminal output formatting in the CLI
 
-### diffusers (optional — GPU path only)
+### diffusers (optional - GPU path only)
 - **License:** Apache 2.0
 - **Source:** https://github.com/huggingface/diffusers
 - **Use:** `WanVACEPipeline` / `WanVACETransformer3DModel` for the Wan2.1-VACE backends (1.3B and 14B, incl. GGUF loading)
 
-### transformers (optional — GPU path only)
+### transformers (optional - GPU path only)
 - **License:** Apache 2.0
 - **Source:** https://github.com/huggingface/transformers
 - **Use:** UMT5 text encoder and tokenizer for the Wan-VACE pipeline
 
-### gguf (optional — GPU path only)
+### gguf (optional - GPU path only)
 - **License:** MIT
 - **Source:** https://github.com/ggml-org/llama.cpp/tree/master/gguf-py
 - **Use:** GGUF file parsing for the quantized 14B transformer (via diffusers `GGUFQuantizationConfig`)
 
-### accelerate (optional — GPU path only)
+### accelerate (optional - GPU path only)
 - **License:** Apache 2.0
 - **Source:** https://github.com/huggingface/accelerate
 - **Use:** Model loading and device placement utilities
 
-### torch / torchvision (optional — GPU path only)
+### torch / torchvision (optional - GPU path only)
 - **License:** BSD 3-Clause
 - **Source:** https://github.com/pytorch/pytorch / https://github.com/pytorch/vision
 - **Use:** Tensor operations, model inference, and optional RAFT optical flow
 
-### onnxruntime / onnxruntime-gpu (optional — GPU path only)
+### onnxruntime / onnxruntime-gpu (optional - GPU path only)
 - **License:** MIT
 - **Source:** https://github.com/microsoft/onnxruntime
 - **Use:** ONNX model inference for DWPose
 
-### rtmlib (optional — GPU path only)
+### rtmlib (optional - GPU path only)
 - **License:** Apache 2.0
 - **Source:** https://github.com/Tau-J/rtmlib
 - **Use:** DWPose-L pose estimation wrapper
 
-### sam2 (optional — segmentation/masking)
+### sam2 (optional - segmentation/masking)
 - **License:** Apache 2.0
 - **Source:** https://github.com/facebookresearch/sam2
 - **Use:** SAM-2 character-image segmentation (`--segmenter sam2`)
@@ -111,19 +111,19 @@ license.
 - **License:** Apache 2.0
 - **Source:** https://huggingface.co/Wan-AI/Wan2.1-VACE-1.3B-diffusers
 - **Provider:** Alibaba / Wan-AI
-- **Use:** VACE generation backend for `wan-1.3b-vace` — the primary GPU-validated real generation backend.
+- **Use:** VACE generation backend for `wan-1.3b-vace` - the primary GPU-validated real generation backend.
 
 ### Wan2.1-VACE-14B (optional, GPU-validated backend)
 - **License:** Apache 2.0
 - **Source:** https://huggingface.co/Wan-AI/Wan2.1-VACE-14B-diffusers
 - **Provider:** Alibaba / Wan-AI
-- **Use:** VACE generation backend for `wan-14b-vace` (~75 GB). Explicit-only — `--auto` never selects it.
+- **Use:** VACE generation backend for `wan-14b-vace` (~75 GB). Explicit-only - `--auto` never selects it.
 
 ### Wan2.1-VACE-14B GGUF quantizations (optional, GPU-validated backend)
 - **License:** Apache 2.0 (inherited from the Wan2.1-VACE-14B base model)
 - **Source:** https://huggingface.co/QuantStack/Wan2.1_14B_VACE-GGUF
 - **Provider:** Quantized and redistributed by QuantStack (base model by Alibaba / Wan-AI)
-- **Use:** GGUF Q4_K_M quantized weights for the `wan-14b-vace-gguf` backend. Explicit-only — `--auto` never selects it.
+- **Use:** GGUF Q4_K_M quantized weights for the `wan-14b-vace-gguf` backend. Explicit-only - `--auto` never selects it.
 
 ### UMT5-XXL Text Encoder
 - **License:** Apache 2.0
@@ -161,7 +161,7 @@ license.
 
 ## Output Licensing
 
-Motion Mirror code is Apache 2.0. The Wan2.1 model weights are also Apache 2.0,
+Motion Mirror code is MIT licensed. The Wan2.1 model weights are Apache 2.0,
 which permits commercial use of both the models and their generated outputs,
 subject to applicable laws and Alibaba's acceptable use policy. Users generating
 videos commercially should review the full Wan2.1 model card at

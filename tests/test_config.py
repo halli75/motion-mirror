@@ -44,6 +44,13 @@ def test_lora_defaults_and_validation():
         MotionMirrorConfig(lora_scale=0)
 
 
+def test_fast_and_lora_are_mutually_exclusive():
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        MotionMirrorConfig(fast=True, lora="some/repo:file.safetensors")
+    assert MotionMirrorConfig(fast=True).fast is True
+    assert MotionMirrorConfig(lora="some/repo").fast is False
+
+
 def test_output_dir():
     c = MotionMirrorConfig(project_root=Path("/tmp/proj"))
     assert c.output_dir == Path("/tmp/proj/outputs")

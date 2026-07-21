@@ -105,6 +105,11 @@ class MotionMirrorConfig:
             raise ValueError(
                 f"lora_scale must be > 0, got {self.lora_scale}"
             )
+        if self.fast and self.lora is not None:
+            raise ValueError(
+                "fast and lora are mutually exclusive: fast applies a curated "
+                "distill LoRA; set one or the other"
+            )
 
         for field_name, allowed in (
             ("backend", get_args(BackendName)),

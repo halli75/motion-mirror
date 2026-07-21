@@ -1,6 +1,6 @@
 [preset]
 name = "fast"
-description = "Fast distilled generation - 14B backend, 4 steps, CFG off"
+description = "Fast distilled generation (locked to wan-14b-vace, 4 steps, CFG off)"
 backend = "wan-14b-vace"
 resolution = "832x480"
 num_frames = 81

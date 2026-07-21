@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import sys
 import types
+import warnings
 from pathlib import Path
 
 import cv2
@@ -557,7 +558,9 @@ def test_vace_fast_14b_missing_lora_names_download_command(tmp_path):
     req, cfg = _vace_pipeline_request(tmp_path, backend="wan-14b-vace", fast=True)
 
     with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
-        with pytest.raises(FileNotFoundError, match="download --model fast"):
+        with pytest.raises(
+            FileNotFoundError, match="download --model wan-fast-14b-lora"
+        ):
             generate_with_vace(req, cfg)
 
 
@@ -573,12 +576,13 @@ def _seed_fast_1_3b_lora(cfg: MotionMirrorConfig) -> Path:
     return path
 
 
-def test_vace_fast_1_3b_applies_lora_and_prints_nc_warning(tmp_path, capsys):
+def test_vace_fast_1_3b_applies_lora_and_warns_noncommercial(tmp_path):
     req, cfg = _vace_pipeline_request(tmp_path, fast=True)
     lora_path = _seed_fast_1_3b_lora(cfg)
 
     with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
-        generate_with_vace(req, cfg)
+        with pytest.warns(UserWarning, match="NON-COMMERCIAL"):
+            generate_with_vace(req, cfg)
 
     pipe = FakePipe.last_instance
     call = pipe.calls[0]
@@ -586,7 +590,6 @@ def test_vace_fast_1_3b_applies_lora_and_prints_nc_warning(tmp_path, capsys):
     assert call["guidance_scale"] == 1.0
     assert pipe.scheduler.flow_shift == 5.0
     assert pipe.events[0] == ("load_lora_weights", str(lora_path))
-    assert "NON-COMMERCIAL" in capsys.readouterr().out
 
 
 def test_vace_fast_1_3b_missing_lora_names_artifact_and_nc(tmp_path):
@@ -601,7 +604,7 @@ def test_vace_fast_1_3b_missing_lora_names_artifact_and_nc(tmp_path):
     assert "NON-COMMERCIAL" in msg
 
 
-def test_vace_fast_gguf_swaps_in_fusionx_transformer(tmp_path, capsys):
+def test_vace_fast_gguf_swaps_in_fusionx_transformer(tmp_path):
     req, cfg = _vace_pipeline_request(
         tmp_path, backend="wan-14b-vace-gguf", fast=True
     )
@@ -610,13 +613,13 @@ def test_vace_fast_gguf_swaps_in_fusionx_transformer(tmp_path, capsys):
     )
 
     with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
-        generate_with_vace(req, cfg)
+        with pytest.warns(UserWarning, match="EXPERIMENTAL"):
+            generate_with_vace(req, cfg)
 
     assert FakeWanVACETransformer3DModel.last_args[0] == str(fusionx_path)
     call = FakePipe.last_instance.calls[0]
     assert call["num_inference_steps"] == 8
     assert call["guidance_scale"] == 1.0
-    assert "EXPERIMENTAL" in capsys.readouterr().out
 
 
 def test_vace_fast_gguf_missing_fusionx_names_download_command(tmp_path):
@@ -643,14 +646,16 @@ def test_vace_normal_gguf_path_unchanged_by_fast_feature(tmp_path):
     assert call["guidance_scale"] == 5.0
 
 
-def test_vace_fast_14b_prints_no_license_warning(tmp_path, capsys):
+def test_vace_fast_14b_emits_no_license_warning(tmp_path):
     req, cfg = _vace_pipeline_request(tmp_path, backend="wan-14b-vace", fast=True)
     _seed_fast_14b_lora(cfg)
 
-    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
-        generate_with_vace(req, cfg)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+            generate_with_vace(req, cfg)
 
-    assert "NON-COMMERCIAL" not in capsys.readouterr().out
+    assert not any("NON-COMMERCIAL" in str(w.message) for w in caught)
 
 
 def _seed_lora_file(tmp_path: Path) -> Path:

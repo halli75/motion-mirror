@@ -2,12 +2,21 @@
 from __future__ import annotations
 
 import re
+import warnings
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 from ..config import MotionMirrorConfig
+from ..model_specs import (
+    DEFAULT_GUIDANCE_SCALE,
+    DEFAULT_INFERENCE_STEPS,
+    FAST_BACKEND_SPECS,
+    FAST_FLOW_SHIFT,
+    FAST_GUIDANCE_SCALE,
+    MODEL_SPECS,
+)
 from ..types import GenerationResult
 from .models import GenerationRequest
 
@@ -43,58 +52,6 @@ _VACE_BACKEND_SPECS: dict[str, dict] = {
         "download_group": "vace-14b-gguf",
     },
 }
-# Fast-mode (distilled few-step) artifacts, keyed by backend. Backends absent
-# here reject --fast. `lora_filename` entries are runtime LoRAs fused into the
-# transformer; the abandoned LightX2V-runtime attempt proved the recipe
-# (4 steps, CFG off, shift 5.0) but died on flash_attn deps - the diffusers
-# load_lora_weights path used here avoids that stack entirely.
-_FAST_BACKEND_SPECS: dict[str, dict] = {
-    "wan-14b-vace": {
-        "artifact": "wan-fast-14b-lora",
-        "cache_subdir": "wan-fast-14b-lora",
-        "lora_filename": (
-            "loras/Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors"
-        ),
-        "steps": 4,
-        "download_model": "fast",
-    },
-    "wan-1.3b-vace": {
-        "artifact": "wan-fast-1.3b",
-        "cache_subdir": "wan-fast-1.3b",
-        "lora_filename": (
-            "LoRAs/Wan2_1_self_forcing_1_3B/"
-            "Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors"
-        ),
-        "steps": 4,
-        # Deliberately excluded from the "fast" download group: NC license.
-        "download_model": "wan-fast-1.3b",
-        "license_warning": (
-            "NON-COMMERCIAL ONLY: the 1.3B fast weights derive from "
-            "Self-Forcing (CC-BY-NC-SA-4.0). Generated outputs may not be "
-            "used commercially. Motion Mirror code itself remains MIT."
-        ),
-    },
-    # LoRA-on-GGUF is unsupported in diffusers, so fast mode here swaps the
-    # quantized transformer for FusionX's pre-merged distilled GGUF instead.
-    # Base components (VAE/text encoder/scheduler) are unchanged.
-    "wan-14b-vace-gguf": {
-        "artifact": "wan-14b-vace-fusionx-gguf",
-        "gguf_cache_subdir": "wan-14b-vace-fusionx-gguf",
-        "gguf_filename": "Wan2.1_T2V_14B_FusionX_VACE-Q4_K_M.gguf",
-        "steps": 8,
-        "download_model": "wan-14b-vace-fusionx-gguf",
-        "experimental_warning": (
-            "FusionX GGUF fast mode is EXPERIMENTAL: untested via diffusers; "
-            "validated in ComfyUI only."
-        ),
-    },
-}
-
-_DEFAULT_INFERENCE_STEPS = 30
-_DEFAULT_GUIDANCE_SCALE = 5.0
-_FAST_GUIDANCE_SCALE = 1.0  # CFG off - distilled students are CFG-free
-_FAST_FLOW_SHIFT = 5.0
-
 # Describe the desired subject, NEVER the conditioning mechanism: the text
 # prompt dominates subject choice, and naming the control signal ("skeleton")
 # made VACE render an anatomical skeleton instead of the reference character
@@ -149,6 +106,22 @@ def generate_with_vace(
     return _generate_vace(request, cfg, out_w, out_h, spec)
 
 
+def _fast_spec_for(config: MotionMirrorConfig, backend: str) -> dict | None:
+    """The fast-mode artifact spec for a backend, or None when fast is off.
+
+    Raises if fast mode is requested for a backend with no distill artifact.
+    """
+    if not config.fast:
+        return None
+    fast_spec = FAST_BACKEND_SPECS.get(backend)
+    if fast_spec is None and backend != "mock":
+        raise ValueError(
+            f"--fast is not supported for backend {backend!r}. "
+            f"Fast-capable backends: {sorted(FAST_BACKEND_SPECS)}."
+        )
+    return fast_spec
+
+
 def resolve_generation_settings(
     config: MotionMirrorConfig, backend: str
 ) -> tuple[int, float, float | None]:
@@ -156,28 +129,22 @@ def resolve_generation_settings(
 
     Pure. Precedence: explicit config value > fast-mode default > normal
     default. The flow-shift override is None unless fast mode forces one.
-    Raises if fast mode is requested for a backend with no distill artifact.
     """
-    fast_spec = _FAST_BACKEND_SPECS.get(backend) if config.fast else None
-    if config.fast and fast_spec is None and backend != "mock":
-        raise ValueError(
-            f"--fast is not supported for backend {backend!r}. "
-            f"Fast-capable backends: {sorted(_FAST_BACKEND_SPECS)}."
-        )
+    fast_spec = _fast_spec_for(config, backend)
 
-    default_steps = fast_spec["steps"] if fast_spec else _DEFAULT_INFERENCE_STEPS
+    default_steps = fast_spec["steps"] if fast_spec else DEFAULT_INFERENCE_STEPS
     steps = (
         config.num_inference_steps
         if config.num_inference_steps is not None
         else default_steps
     )
-    default_guidance = _FAST_GUIDANCE_SCALE if fast_spec else _DEFAULT_GUIDANCE_SCALE
+    default_guidance = FAST_GUIDANCE_SCALE if fast_spec else DEFAULT_GUIDANCE_SCALE
     guidance = (
         config.guidance_scale
         if config.guidance_scale is not None
         else default_guidance
     )
-    flow_shift = _FAST_FLOW_SHIFT if fast_spec else None
+    flow_shift = FAST_FLOW_SHIFT if fast_spec else None
     return steps, guidance, flow_shift
 
 
@@ -221,23 +188,12 @@ def _generate_vace(
     steps, guidance_scale, flow_shift_override = resolve_generation_settings(
         config, spec["name"]
     )
-    fast_spec = _FAST_BACKEND_SPECS.get(spec["name"]) if config.fast else None
+    fast_spec = _fast_spec_for(config, spec["name"])
     if fast_spec is not None:
-        from rich.console import Console as _RichConsole
-        from rich.panel import Panel as _RichPanel
-
-        if fast_spec.get("license_warning"):
-            _RichConsole().print(
-                _RichPanel(
-                    fast_spec["license_warning"],
-                    border_style="red",
-                    title="LICENSE WARNING",
-                )
-            )
-        if fast_spec.get("experimental_warning"):
-            _RichConsole().print(
-                f"[yellow]WARNING:[/yellow] {fast_spec['experimental_warning']}"
-            )
+        artifact = MODEL_SPECS[fast_spec["artifact"]]
+        for key in ("license_warning", "experimental_warning"):
+            if artifact.get(key):
+                warnings.warn(artifact[key], stacklevel=2)
 
     if is_gguf and config.lora is not None:
         raise ValueError(
@@ -250,11 +206,12 @@ def _generate_vace(
         if fast_spec is not None:
             # Fast mode swaps only the quantized transformer file for the
             # pre-merged distilled one; base resolution stays on `spec`.
+            artifact = MODEL_SPECS[fast_spec["artifact"]]
             gguf_spec = {
                 **spec,
-                "cache_subdir": fast_spec["gguf_cache_subdir"],
-                "gguf_filename": fast_spec["gguf_filename"],
-                "download_group": fast_spec["download_model"],
+                "cache_subdir": artifact["cache_subdir"],
+                "gguf_filename": artifact["filename"],
+                "download_group": fast_spec["artifact"],
             }
         transformer_path = _resolve_gguf_transformer_path(config, gguf_spec)
     else:
@@ -327,8 +284,8 @@ def _generate_vace(
             torch_dtype=dtype,
         )
 
-    if fast_spec is not None and "lora_filename" in fast_spec:
-        lora_path = _resolve_fast_lora_path(config, fast_spec)
+    if fast_spec is not None and not fast_spec.get("gguf_swap"):
+        lora_path = _resolve_fast_lora_path(config, fast_spec["artifact"])
     elif config.lora is not None:
         lora_path = _resolve_lora_path(config, config.lora)
     else:
@@ -489,18 +446,18 @@ def _resolve_gguf_transformer_path(config: MotionMirrorConfig, spec: dict) -> Pa
     return transformer_path
 
 
-def _resolve_fast_lora_path(config: MotionMirrorConfig, fast_spec: dict) -> Path:
-    path = config.model_cache(fast_spec["cache_subdir"]) / fast_spec["lora_filename"]
+def _resolve_fast_lora_path(config: MotionMirrorConfig, artifact: str) -> Path:
+    spec = MODEL_SPECS[artifact]
+    path = config.model_cache(spec["cache_subdir"]) / spec["filename"]
     if not path.is_file() or path.stat().st_size == 0:
         nc_note = (
             " (NOTE: these weights are NON-COMMERCIAL, CC-BY-NC-SA-4.0)"
-            if fast_spec.get("license_warning")
+            if spec.get("license_warning")
             else ""
         )
         raise FileNotFoundError(
             f"Fast-mode LoRA not found: {path}.\n"
-            f"Run: motion-mirror download --model {fast_spec['download_model']}"
-            f"{nc_note}"
+            f"Run: motion-mirror download --model {artifact}{nc_note}"
         )
     return path
 
@@ -518,7 +475,7 @@ def _resolve_lora_path(config: MotionMirrorConfig, lora: str) -> str:
     # A path-looking string that does not exist is a user error, not a repo
     # id. Windows drive letters contain ':', so this must precede the
     # repo:filename split.
-    if "\\" in lora or re.match(r"^[A-Za-z]:[\\/]", lora) or local.is_absolute():
+    if "\\" in lora or re.match(r"^[A-Za-z]:([\\/]|$)", lora) or local.is_absolute():
         raise FileNotFoundError(f"LoRA file not found: {lora}")
 
     from huggingface_hub import hf_hub_download, snapshot_download

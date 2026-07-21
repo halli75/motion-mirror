@@ -375,6 +375,20 @@ def test_presets_list_shows_fast():
     assert "fast" in result.output
 
 
+def test_fast_preset_enables_fast_without_pinning_steps():
+    import importlib.resources
+    import tomllib
+
+    text = (
+        importlib.resources.files("motion_mirror") / "presets" / "fast.toml"
+    ).read_text(encoding="utf-8")
+    preset = tomllib.loads(text)["preset"]
+    assert preset["fast"] is True
+    # num_inference_steps must stay unset so the per-backend fast step default
+    # (4) applies; pinning it here would silently defeat fast mode.
+    assert "num_inference_steps" not in preset
+
+
 def test_run_rejects_out_of_range_steps(tmp_path):
     img = _make_image(tmp_path / "char.png")
     vid = _make_video(tmp_path / "motion.mp4", frames=5)

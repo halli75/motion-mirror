@@ -19,7 +19,7 @@ import cv2
 
 from motion_mirror import MotionMirrorConfig, MotionMirrorPipeline
 
-V02A_BACKENDS = ("wan-1.3b-vace", "wan-14b-vace", "wan-14b-vace-gguf")
+SMOKE_BACKENDS = ("wan-1.3b-vace", "wan-14b-vace", "wan-14b-vace-gguf")
 
 
 @dataclass(slots=True)
@@ -104,7 +104,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--motion", type=Path, required=True, help="Reference motion video path.")
     parser.add_argument(
         "--backend",
-        choices=V02A_BACKENDS,
+        choices=SMOKE_BACKENDS,
         action="append",
         required=True,
         help="Backend to validate. Repeat to run a matrix.",

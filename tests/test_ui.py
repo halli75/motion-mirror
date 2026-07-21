@@ -96,6 +96,58 @@ def test_frames_slider_emits_valid_wan_frame_counts():
     assert (sl.value - sl.minimum) % sl.step == 0
 
 
+def _find_component(demo, cls, label):
+    for c in demo.blocks.values():
+        if isinstance(c, cls) and c.label == label:
+            return c
+    raise AssertionError(f"{label!r} {cls.__name__} not found in Blocks")
+
+
+def test_fast_checkbox_defaults_off():
+    demo = create_app()
+    cb = _find_component(demo, gr.Checkbox, "Fast mode")
+    assert cb.value is False
+
+
+def test_steps_slider_defaults_to_auto():
+    demo = create_app()
+    sl = _find_component(demo, gr.Slider, "Steps (0 = auto)")
+    assert sl.value == 0
+    assert sl.minimum == 0
+    assert sl.maximum == 200
+
+
+def test_run_pipeline_threads_fast_and_steps(monkeypatch, tmp_path):
+    import motion_mirror.pipeline as pipeline_mod
+
+    captured = {}
+
+    class FakePipeline:
+        def __init__(self, cfg):
+            captured["cfg"] = cfg
+
+        def run(self, img, vid):
+            class Result:
+                output_path = tmp_path / "out.mp4"
+            return Result()
+
+    monkeypatch.setattr(pipeline_mod, "MotionMirrorPipeline", FakePipeline)
+    from motion_mirror.ui.app import _run_pipeline
+
+    img = tmp_path / "char.png"
+    img.touch()
+    vid = tmp_path / "motion.mp4"
+    vid.touch()
+
+    _run_pipeline(str(img), str(vid), "mock", "64x32", 5, 16, "cpu", True, 12)
+    assert captured["cfg"].fast is True
+    assert captured["cfg"].num_inference_steps == 12
+
+    _run_pipeline(str(img), str(vid), "mock", "64x32", 5, 16, "cpu", False, 0)
+    assert captured["cfg"].fast is False
+    assert captured["cfg"].num_inference_steps is None
+
+
 @pytest.mark.parametrize("frames,expected", [(80, 81), (4, 5), (81, 81), (2, 1)])
 def test_run_pipeline_snaps_frames_to_4k_plus_1(monkeypatch, tmp_path, frames, expected):
     """_run_pipeline must snap arbitrary frame counts to the nearest 4k+1."""

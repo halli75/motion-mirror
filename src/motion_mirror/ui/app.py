@@ -16,6 +16,8 @@ def _run_pipeline(
     frames: int | float,
     density: int | float,
     device: str,
+    fast: bool = False,
+    steps: int | float = 0,
 ) -> tuple[str | None, str]:
     """Core pipeline execution logic, extracted for testability.
 
@@ -37,6 +39,10 @@ def _run_pipeline(
         num_frames=snapped_frames,
         trajectory_density=int(density),
         device=device,
+        fast=bool(fast),
+        # 0 = "auto": let generation resolve the default (30, or the
+        # fast-mode step count when fast is on).
+        num_inference_steps=int(steps) or None,
     )
     try:
         result = MotionMirrorPipeline(run_cfg).run(
@@ -134,6 +140,23 @@ def create_app(config: "MotionMirrorConfig | None" = None):
                     value=cfg_defaults.trajectory_density,
                     label="Trajectory Density",
                 )
+            with gr.Row():
+                fast_cb = gr.Checkbox(
+                    value=cfg_defaults.fast,
+                    label="Fast mode",
+                    info=(
+                        "Distilled few-step generation (needs fast weights: "
+                        "motion-mirror download --model fast). 1.3B fast "
+                        "weights are non-commercial."
+                    ),
+                )
+                steps_sl = gr.Slider(
+                    minimum=0,
+                    maximum=200,
+                    step=1,
+                    value=cfg_defaults.num_inference_steps or 0,
+                    label="Steps (0 = auto)",
+                )
 
         run_btn = gr.Button("Generate", variant="primary")
 
@@ -147,6 +170,8 @@ def create_app(config: "MotionMirrorConfig | None" = None):
                 frames_sl,
                 density_sl,
                 device_dd,
+                fast_cb,
+                steps_sl,
             ],
             outputs=[output_video, status_box],
         )

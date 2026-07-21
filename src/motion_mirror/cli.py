@@ -77,9 +77,7 @@ def _cache_size_bytes(path: Path) -> int:
     return sum(file.stat().st_size for file in path.rglob("*") if file.is_file())
 
 
-# Safety margin applied to the disk-space preflight: require the free space to
-# exceed the sum of expected download sizes by this factor so a download cannot
-# fill the disk to the brim (temp files, metadata, .incomplete artifacts).
+# Free-space headroom over the summed download sizes in the disk preflight.
 _DISK_MARGIN = 1.1
 
 
@@ -112,8 +110,7 @@ def run(
         cfg_kwargs["backend"] = preset_data.get("backend", "wan-1.3b-vace")
         cfg_kwargs["resolution"] = preset_data.get("resolution", "832x480")
         cfg_kwargs["num_frames"] = preset_data.get("num_frames", 81)
-        # Only inject when the preset names it: an unset value must stay None
-        # so fast-mode step defaults can apply downstream.
+        # Leave unset so fast-mode step defaults can apply downstream.
         if "num_inference_steps" in preset_data:
             cfg_kwargs["num_inference_steps"] = preset_data["num_inference_steps"]
         cfg_kwargs["trajectory_density"] = preset_data.get("trajectory_density", 512)

@@ -20,13 +20,6 @@ from ..model_specs import (
 from ..types import GenerationResult
 from .models import GenerationRequest
 
-# Per-backend model specs. `name` echoes the backend key so the result can
-# report the ACTUAL backend used. `download_group` names the CLI group
-# (`motion-mirror download --model <group>`) that fetches this backend's
-# weights, so error hints point at the right download. GGUF backends carry a
-# `gguf_filename` (the quantized transformer) plus `base_cache_subdir` /
-# `full_cache_subdir` for the un-quantized base components (VAE, text encoder,
-# scheduler, config).
 _VACE_BACKEND_SPECS: dict[str, dict] = {
     "wan-1.3b-vace": {
         "name": "wan-1.3b-vace",
@@ -52,10 +45,8 @@ _VACE_BACKEND_SPECS: dict[str, dict] = {
         "download_group": "vace-14b-gguf",
     },
 }
-# Describe the desired subject, NEVER the conditioning mechanism: the text
-# prompt dominates subject choice, and naming the control signal ("skeleton")
-# made VACE render an anatomical skeleton instead of the reference character
-# (Wave-2 GPU run, 2026-07-03).
+# Never name the control signal here: prompting "skeleton" makes VACE render an
+# anatomical skeleton instead of the character.
 _VACE_PROMPT = (
     "A person performs a smooth, continuous dance in a well-lit space. "
     "The person's appearance, face, hairstyle, and clothing exactly match "
@@ -93,8 +84,6 @@ def generate_with_vace(
     if cfg.backend == "mock" or request.backend == "mock":
         return _generate_mock(request, out_w, out_h)
 
-    # Prefer the request's explicit backend; fall back to config for
-    # placeholder values ("auto"/"mock"/unset).
     backend = request.backend if request.backend not in (None, "auto", "mock") else cfg.backend
     spec = _VACE_BACKEND_SPECS.get(backend)
     if spec is None:
@@ -204,8 +193,6 @@ def _generate_vace(
     if is_gguf:
         gguf_spec = spec
         if fast_artifact is not None:
-            # Fast mode swaps only the quantized transformer file for the
-            # pre-merged distilled one; base resolution stays on `spec`.
             gguf_spec = {
                 **spec,
                 "cache_subdir": fast_artifact["cache_subdir"],
@@ -232,9 +219,7 @@ def _generate_vace(
             UniPCMultistepScheduler,
         )
         if is_gguf:
-            # diffusers defers the gguf-package check until dequantization;
-            # import it here so a missing dep fails with THIS message instead
-            # of a diffusers-internal error mid-load.
+            # Import here so a missing gguf dep fails with this message.
             import gguf  # type: ignore[import]  # noqa: F401
     except ImportError as exc:
         raise ImportError(
@@ -290,9 +275,8 @@ def _generate_vace(
     else:
         lora_path = None
     if lora_path is not None:
-        # Fuse-then-unload: zero runtime adapter overhead, and fused weights
-        # survive the offload hooks installed later by _apply_memory_policy
-        # (loading after sequential offload would hit meta tensors).
+        # Fuse then unload before offload: loading a LoRA after sequential
+        # offload would hit meta tensors.
         pipe.load_lora_weights(lora_path)
         pipe.fuse_lora(lora_scale=config.lora_scale)
         pipe.unload_lora_weights()
@@ -347,8 +331,7 @@ def _generate_vace(
         _write_output_video(request.output_path, output)
     finally:
         del pipe, vae
-        # GGUF path holds an extra transformer handle; release it before
-        # clearing the CUDA cache so the freed VRAM is actually reclaimed.
+        # Release the extra GGUF transformer handle before clearing the cache.
         if transformer is not None:
             del transformer
         if getattr(torch.cuda, "is_available", lambda: False)():
@@ -374,8 +357,7 @@ def _validate_vace_inputs(request: GenerationRequest) -> None:
         if not path.exists():
             raise FileNotFoundError(f"VACE input {label} not found: {path}")
 
-    # Wan VACE's temporal VAE compresses in groups of 4 frames plus a leading
-    # keyframe, so num_frames must satisfy (n - 1) % 4 == 0 (e.g. 81, 61, 17).
+    # Temporal VAE requires num_frames = 4k+1 (e.g. 81, 61, 17).
     if (request.frames - 1) % 4 != 0:
         raise ValueError(
             f"VACE requires num_frames of the form 4k+1 (e.g. 17, 61, 81); "
@@ -409,17 +391,14 @@ def _resolve_gguf_base_source(config: MotionMirrorConfig, spec: dict) -> str:
     """
     group = spec["download_group"]
 
-    # (a) A full 14B checkpoint already on disk provides every base component.
     full_dir = config.model_cache(spec["full_cache_subdir"])
     if (full_dir / "model_index.json").exists():
         return str(full_dir)
 
-    # (b) A dedicated base-components cache (VAE/text-encoder/config only).
     base_dir = config.model_cache(spec["base_cache_subdir"])
     if (base_dir / "model_index.json").exists():
         return str(base_dir)
 
-    # (c) Base dir absent or empty: first-time run, stream from the hub.
     if not base_dir.exists() or not any(base_dir.iterdir()):
         print(
             f"[motion-mirror] Base components for {spec['name']} not cached; "
@@ -427,7 +406,6 @@ def _resolve_gguf_base_source(config: MotionMirrorConfig, spec: dict) -> str:
         )
         return spec["model_id"]
 
-    # (d) Base dir populated but missing model_index.json: partial/broken cache.
     raise FileNotFoundError(
         f"GGUF base components in {base_dir} are incomplete "
         "(missing model_index.json).\n"
@@ -471,9 +449,8 @@ def _resolve_lora_path(config: MotionMirrorConfig, lora: str) -> str:
     if local.is_file():
         return str(local)
 
-    # A path-looking string that does not exist is a user error, not a repo
-    # id. Windows drive letters contain ':', so this must precede the
-    # repo:filename split.
+    # Reject path-looking strings (incl. Windows drive letters) before the
+    # repo:filename split, since drive letters also contain ':'.
     if "\\" in lora or re.match(r"^[A-Za-z]:([\\/]|$)", lora) or local.is_absolute():
         raise FileNotFoundError(f"LoRA file not found: {lora}")
 
@@ -543,18 +520,14 @@ def _apply_memory_policy(
         and device.startswith("cuda")
         and hasattr(pipe, "enable_model_cpu_offload")
     ):
-        # GGUF-quantized params carry a `quant_type` attribute lost when
-        # sequential offload round-trips each weight through the meta device
-        # ... later crashing in diffusers' GGUF utils with `KeyError: None`.
-        # Whole-module offload keeps each component intact on the CPU<->GPU
-        # hops, preserving quant metadata.
+        # GGUF must use whole-module offload: sequential offload drops the
+        # quant_type metadata (later KeyError: None in diffusers' GGUF utils).
         pipe.enable_model_cpu_offload()
         return
 
     if config.offload_model and device.startswith("cuda") and hasattr(pipe, "enable_sequential_cpu_offload"):
-        # Sequential offload owns every submodule's device placement (weights
-        # become meta tensors behind hooks); a manual t5_cpu move afterwards
-        # raises "Cannot copy out of meta tensor".
+        # No manual t5_cpu move under sequential offload: weights are meta
+        # tensors behind hooks and the move raises "Cannot copy out of meta".
         pipe.enable_sequential_cpu_offload()
         return
 

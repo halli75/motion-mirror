@@ -437,10 +437,8 @@ def _check_content(
         return False, f"only {len(frames)} frame(s) decoded"
     stack = np.stack(frames)
 
-    # 1. Actually moves: consecutive frames must differ. Fast/distilled runs
-    # (4-8 steps) are held to the same bar - distillation reduces motion
-    # amplitude, so a fast run failing here is a real quality finding, not a
-    # reason to loosen the threshold.
+    # Fast runs are held to the same motion bar; a failure here is a real
+    # quality finding, not a threshold to loosen.
     inter = float(np.abs(np.diff(stack, axis=0)).mean())
     if inter < 0.5:
         return False, f"static output (mean inter-frame diff {inter:.2f})"

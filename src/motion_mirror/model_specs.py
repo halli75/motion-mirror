@@ -1,14 +1,6 @@
-"""Downloadable model specs and fast-mode artifact mapping.
+"""Model download specs and fast-mode artifacts, shared by the CLI and backend.
 
-Single source of truth shared by the CLI download command and the generation
-backend. Keeping it here (importing nothing from cli/generate) avoids a cycle:
-cli imports the pipeline which imports the generation backend.
-
-`MODEL_SPECS` is keyed by download name; each entry carries `repo_id`,
-`filename` (None => snapshot download), `expected_bytes`, `cache_subdir`,
-`label`, and optionally `license_warning` / `experimental_warning`.
-`FAST_BACKEND_SPECS` maps a backend to its curated distill artifact by name,
-so filenames and warning text live in exactly one place.
+Imports nothing from cli/generate so both can import it without a cycle.
 """
 from __future__ import annotations
 
@@ -107,13 +99,9 @@ MODEL_GROUPS = {
     "vace-14b": ["wan-14b-vace"],
     "vace-14b-gguf": ["wan-14b-vace-gguf", "wan-14b-vace-base"],
     "extras": ["sam2"],
-    # Apache-licensed fast artifacts only; NC-licensed pieces must be
-    # requested explicitly by name so no one pulls them by accident.
+    # Apache-only: the NC-licensed 1.3B artifact must be named explicitly.
     "fast": ["wan-fast-14b-lora"],
-    # "all" is deliberately the validated ~6 GB lineup only. The 14B backends
-    # (~75 GB full, ~24 GB GGUF+base) are GPU-unvalidated and must be requested
-    # explicitly via their own model/group keys - growing "all" to ~130 GB
-    # silently would be hostile.
+    # Validated ~6 GB lineup only; the 14B backends are named explicitly.
     "all": [
         "dwpose-pose",
         "dwpose-det",
@@ -122,14 +110,9 @@ MODEL_GROUPS = {
     ],
 }
 
-# Fast-mode (distilled few-step) artifacts, keyed by backend. Backends absent
-# here reject --fast. `artifact` names the MODEL_SPECS entry (filenames and
-# warning text live there). Non-`gguf_swap` entries are runtime LoRAs fused
-# into the transformer; the abandoned LightX2V-runtime attempt proved the
-# recipe (4 steps, CFG off, shift 5.0) but died on flash_attn deps - the
-# diffusers load_lora_weights path used here avoids that stack entirely.
-# LoRA-on-GGUF is unsupported in diffusers, so the GGUF backend instead swaps
-# its quantized transformer for FusionX's pre-merged distilled GGUF.
+# Distill artifact per backend; `artifact` names the MODEL_SPECS entry.
+# `gguf_swap` entries replace the quantized transformer (LoRA-on-GGUF is
+# unsupported in diffusers); the rest fuse a LoRA.
 FAST_BACKEND_SPECS: dict[str, dict] = {
     "wan-14b-vace": {"artifact": "wan-fast-14b-lora", "steps": 4},
     "wan-1.3b-vace": {"artifact": "wan-fast-1.3b", "steps": 4},

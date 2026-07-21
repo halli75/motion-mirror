@@ -22,51 +22,25 @@ class MotionMirrorConfig:
     project_root: Path = field(default_factory=Path.cwd)
     output_dir_name: str = "outputs"
 
-    # Trajectory
-    trajectory_density: int = 512  # 512 = default, 1024 = HQ
+    trajectory_density: int = 512
 
-    # Generation backend
-    # "auto"               - detect VRAM at runtime and pick the best option
-    # "wan-1.3b-vace"      - 1.3B VACE motion transfer, needs ~9 GB free VRAM
-    # "wan-14b-vace"       - full Wan2.1-VACE-14B-diffusers (~75 GB download).
-    #                        Explicit-only via --backend; NOT selected by auto.
-    #                        GPU-unvalidated as of 0.4.0a0; community-estimated
-    #                        ~8-12 GB peak VRAM at 480p with offload_model+t5_cpu.
-    # "wan-14b-vace-gguf"  - QuantStack Q4_K_M quantized 14B transformer
-    #                        (~11.6 GB download vs ~75 GB full) + base components.
-    #                        Explicit-only via --backend; NOT selected by auto.
-    #                        GPU-unvalidated as of 0.4.0a0; community-estimated
-    #                        ~8-12 GB peak VRAM at 480p with offload_model+t5_cpu.
-    # "mock"               - solid-colour video, no GPU required
     backend: BackendName = "wan-1.3b-vace"
 
-    resolution: str = "832x480"  # WxH string
-    num_frames: int = 81         # 81 frames = ~5 s at 16 fps
-    # Denoising steps; higher = sharper, slower. None = resolved default:
-    # 30 normally, or the per-backend fast-mode step count when fast=True.
+    resolution: str = "832x480"
+    num_frames: int = 81
     num_inference_steps: int | None = None
-    # Classifier-free guidance scale. None = backend default (5.0). Distilled
-    # few-step generation wants 1.0 (CFG off).
     guidance_scale: float | None = None
-    # Optional LoRA applied to the transformer before generation. Accepts a
-    # local .safetensors path, a HF repo id, or "repo_id:filename".
-    # Not supported on GGUF-quantized backends (diffusers limitation).
     lora: str | None = None
     lora_scale: float = 1.0
-    # Curated fast/distilled generation: per-backend distill artifact,
-    # few-step defaults, CFG off. Mutually exclusive with `lora`.
     fast: bool = False
-    device: str = "cuda"         # "cuda" | "cpu"
+    device: str = "cuda"
 
-    # VRAM optimization flags
-    offload_model: bool = False  # sequential layer-by-layer CPU offload
-    t5_cpu: bool = False         # keep T5 text encoder on CPU when supported
+    offload_model: bool = False
+    t5_cpu: bool = False
 
-    # Optional stage upgrades
     flow_estimator: Literal["farneback", "raft"] = "farneback"
     segmenter: Literal["rembg", "sam2"] = "rembg"
 
-    # Model cache
     cache_dir: Path = field(
         default_factory=lambda: Path.home() / ".cache" / "motion-mirror"
     )

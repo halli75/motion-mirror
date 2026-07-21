@@ -133,6 +133,13 @@ _MODEL_SPECS: dict[str, dict] = {
         "cache_subdir": "wan-fast-14b-lora",
         "label": "LightX2V 14B step/CFG distill LoRA (~631 MB, Apache-2.0) [--fast on wan-14b-vace]",
     },
+    "wan-14b-vace-fusionx-gguf": {
+        "repo_id": "QuantStack/Wan2.1_T2V_14B_FusionX_VACE-GGUF",
+        "filename": "Wan2.1_T2V_14B_FusionX_VACE-Q4_K_M.gguf",
+        "expected_bytes": 11_629_623_072,
+        "cache_subdir": "wan-14b-vace-fusionx-gguf",
+        "label": "FusionX pre-merged distilled VACE GGUF Q4_K_M (~11.6 GB, Apache-2.0, EXPERIMENTAL) [--fast on wan-14b-vace-gguf]",
+    },
     "wan-fast-1.3b": {
         "repo_id": "Kijai/WanVideo_comfy",
         "filename": "LoRAs/Wan2_1_self_forcing_1_3B/Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors",
@@ -300,10 +307,12 @@ def download(
             "Model(s) to download: all | dwpose | vace | vace-14b | "
             "vace-14b-gguf | extras | fast | wan-1.3b-vace | wan-14b-vace | "
             "wan-14b-vace-gguf | wan-14b-vace-base | wan-fast-14b-lora | "
-            "wan-fast-1.3b | sam2 | dwpose-pose | dwpose-det. NOTE: 'all' is "
-            "the validated ~6 GB lineup only; the ~75 GB / ~24 GB 14B "
-            "backends must be requested explicitly, and wan-fast-1.3b "
-            "(NON-COMMERCIAL license) is deliberately excluded from 'fast'."
+            "wan-fast-1.3b | wan-14b-vace-fusionx-gguf | sam2 | dwpose-pose "
+            "| dwpose-det. NOTE: 'all' is the validated ~6 GB lineup only; "
+            "the ~75 GB / ~24 GB 14B backends must be requested explicitly. "
+            "'fast' is the small Apache 14B LoRA only - wan-fast-1.3b "
+            "(NON-COMMERCIAL license) and wan-14b-vace-fusionx-gguf "
+            "(~11.6 GB, experimental) are explicit-name-only."
         ),
     ),
     cache_dir: Optional[Path] = typer.Option(None, help="Override default cache directory."),

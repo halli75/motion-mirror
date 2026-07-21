@@ -168,6 +168,14 @@ def test_download_fast_group_prints_no_nc_panel(tmp_path):
     assert "NON-COMMERCIAL" not in result.output
 
 
+def test_wan_14b_vace_fusionx_gguf_spec_shape():
+    spec = _MODEL_SPECS["wan-14b-vace-fusionx-gguf"]
+    assert spec["repo_id"] == "QuantStack/Wan2.1_T2V_14B_FusionX_VACE-GGUF"
+    assert spec["filename"] == "Wan2.1_T2V_14B_FusionX_VACE-Q4_K_M.gguf"
+    assert spec["expected_bytes"] == 11_629_623_072
+    assert spec["cache_subdir"] == "wan-14b-vace-fusionx-gguf"
+
+
 def test_fast_group_is_apache_only():
     # The NC-licensed 1.3B fast artifact must never ride along with the
     # "fast" group; it is explicit-name-only.

@@ -74,6 +74,20 @@ _FAST_BACKEND_SPECS: dict[str, dict] = {
             "used commercially. Motion Mirror code itself remains MIT."
         ),
     },
+    # LoRA-on-GGUF is unsupported in diffusers, so fast mode here swaps the
+    # quantized transformer for FusionX's pre-merged distilled GGUF instead.
+    # Base components (VAE/text encoder/scheduler) are unchanged.
+    "wan-14b-vace-gguf": {
+        "artifact": "wan-14b-vace-fusionx-gguf",
+        "gguf_cache_subdir": "wan-14b-vace-fusionx-gguf",
+        "gguf_filename": "Wan2.1_T2V_14B_FusionX_VACE-Q4_K_M.gguf",
+        "steps": 8,
+        "download_model": "wan-14b-vace-fusionx-gguf",
+        "experimental_warning": (
+            "FusionX GGUF fast mode is EXPERIMENTAL: untested via diffusers; "
+            "validated in ComfyUI only."
+        ),
+    },
 }
 
 _DEFAULT_INFERENCE_STEPS = 30
@@ -208,17 +222,22 @@ def _generate_vace(
         config, spec["name"]
     )
     fast_spec = _FAST_BACKEND_SPECS.get(spec["name"]) if config.fast else None
-    if fast_spec is not None and fast_spec.get("license_warning"):
+    if fast_spec is not None:
         from rich.console import Console as _RichConsole
         from rich.panel import Panel as _RichPanel
 
-        _RichConsole().print(
-            _RichPanel(
-                fast_spec["license_warning"],
-                border_style="red",
-                title="LICENSE WARNING",
+        if fast_spec.get("license_warning"):
+            _RichConsole().print(
+                _RichPanel(
+                    fast_spec["license_warning"],
+                    border_style="red",
+                    title="LICENSE WARNING",
+                )
             )
-        )
+        if fast_spec.get("experimental_warning"):
+            _RichConsole().print(
+                f"[yellow]WARNING:[/yellow] {fast_spec['experimental_warning']}"
+            )
 
     if is_gguf and config.lora is not None:
         raise ValueError(
@@ -227,7 +246,17 @@ def _generate_vace(
         )
 
     if is_gguf:
-        transformer_path = _resolve_gguf_transformer_path(config, spec)
+        gguf_spec = spec
+        if fast_spec is not None:
+            # Fast mode swaps only the quantized transformer file for the
+            # pre-merged distilled one; base resolution stays on `spec`.
+            gguf_spec = {
+                **spec,
+                "cache_subdir": fast_spec["gguf_cache_subdir"],
+                "gguf_filename": fast_spec["gguf_filename"],
+                "download_group": fast_spec["download_model"],
+            }
+        transformer_path = _resolve_gguf_transformer_path(config, gguf_spec)
     else:
         model_source = _resolve_model_source(config, spec)
 

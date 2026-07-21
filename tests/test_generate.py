@@ -518,10 +518,15 @@ def test_resolve_generation_settings_fast_1_3b_defaults():
     assert resolve_generation_settings(cfg, "wan-1.3b-vace") == (4, 1.0, 5.0)
 
 
-def test_resolve_generation_settings_fast_unsupported_backend_raises():
+def test_resolve_generation_settings_fast_gguf_uses_eight_steps():
     cfg = MotionMirrorConfig(device="cpu", fast=True, backend="wan-14b-vace-gguf")
+    assert resolve_generation_settings(cfg, "wan-14b-vace-gguf") == (8, 1.0, 5.0)
+
+
+def test_resolve_generation_settings_fast_unsupported_backend_raises():
+    cfg = MotionMirrorConfig(device="cpu", fast=True)
     with pytest.raises(ValueError, match="not supported"):
-        resolve_generation_settings(cfg, "wan-14b-vace-gguf")
+        resolve_generation_settings(cfg, "wan-99b-vace")
 
 
 def test_resolve_generation_settings_fast_mock_is_noop():
@@ -594,6 +599,48 @@ def test_vace_fast_1_3b_missing_lora_names_artifact_and_nc(tmp_path):
     msg = str(exc_info.value)
     assert "download --model wan-fast-1.3b" in msg
     assert "NON-COMMERCIAL" in msg
+
+
+def test_vace_fast_gguf_swaps_in_fusionx_transformer(tmp_path, capsys):
+    req, cfg = _vace_pipeline_request(
+        tmp_path, backend="wan-14b-vace-gguf", fast=True
+    )
+    fusionx_path = _seed_gguf_transformer(
+        cfg, "wan-14b-vace-fusionx-gguf", "Wan2.1_T2V_14B_FusionX_VACE-Q4_K_M.gguf"
+    )
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        generate_with_vace(req, cfg)
+
+    assert FakeWanVACETransformer3DModel.last_args[0] == str(fusionx_path)
+    call = FakePipe.last_instance.calls[0]
+    assert call["num_inference_steps"] == 8
+    assert call["guidance_scale"] == 1.0
+    assert "EXPERIMENTAL" in capsys.readouterr().out
+
+
+def test_vace_fast_gguf_missing_fusionx_names_download_command(tmp_path):
+    req, cfg = _vace_pipeline_request(
+        tmp_path, backend="wan-14b-vace-gguf", fast=True
+    )
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        with pytest.raises(
+            FileNotFoundError, match="wan-14b-vace-fusionx-gguf"
+        ):
+            generate_with_vace(req, cfg)
+
+
+def test_vace_normal_gguf_path_unchanged_by_fast_feature(tmp_path):
+    req, cfg = _vace_pipeline_request(tmp_path, backend="wan-14b-vace-gguf")
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        generate_with_vace(req, cfg)
+
+    assert "Wan2.1_14B_VACE-Q4_K_M.gguf" in FakeWanVACETransformer3DModel.last_args[0]
+    call = FakePipe.last_instance.calls[0]
+    assert call["num_inference_steps"] == 30
+    assert call["guidance_scale"] == 5.0
 
 
 def test_vace_fast_14b_prints_no_license_warning(tmp_path, capsys):

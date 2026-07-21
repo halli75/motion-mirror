@@ -175,7 +175,7 @@ GPU validation is reproducible via [`runpod-validation/`](runpod-validation/READ
 
 ## License
 
-[MIT](LICENSE) - model weights and dependencies keep their own licenses; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). Generated outputs are subject to the Wan2.1 model terms (Apache 2.0, commercial use permitted).
+[MIT](LICENSE) - model weights and dependencies keep their own licenses; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). Generated outputs are subject to the Wan2.1 model terms (Apache 2.0, commercial use permitted). Exception: `--fast` on the 1.3B backend uses a CC-BY-NC-SA-4.0 distill LoRA - those outputs are **non-commercial only**.
 
 ## Acknowledgments
 

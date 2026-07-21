@@ -130,6 +130,44 @@ def test_wan_fast_14b_lora_spec_shape():
     assert spec["cache_subdir"] == "wan-fast-14b-lora"
 
 
+def test_wan_fast_1_3b_spec_shape():
+    spec = _MODEL_SPECS["wan-fast-1.3b"]
+    assert spec["repo_id"] == "Kijai/WanVideo_comfy"
+    assert spec["filename"] == (
+        "LoRAs/Wan2_1_self_forcing_1_3B/"
+        "Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors"
+    )
+    assert spec["expected_bytes"] == 91_233_416
+    assert spec["cache_subdir"] == "wan-fast-1.3b"
+    assert "NON-COMMERCIAL" in spec["license_warning"]
+
+
+def test_download_wan_fast_1_3b_prints_nc_panel(tmp_path):
+    fake_usage = SimpleNamespace(free=10 ** 15)
+    with patch("huggingface_hub.snapshot_download"), \
+            patch("huggingface_hub.hf_hub_download"), \
+            patch("motion_mirror.cli.shutil.disk_usage", return_value=fake_usage):
+        result = runner.invoke(app, [
+            "download", "--model", "wan-fast-1.3b",
+            "--cache-dir", str(tmp_path / "cache"),
+        ])
+    assert result.exit_code == 0, result.output
+    assert "NON-COMMERCIAL" in result.output
+
+
+def test_download_fast_group_prints_no_nc_panel(tmp_path):
+    fake_usage = SimpleNamespace(free=10 ** 15)
+    with patch("huggingface_hub.snapshot_download"), \
+            patch("huggingface_hub.hf_hub_download"), \
+            patch("motion_mirror.cli.shutil.disk_usage", return_value=fake_usage):
+        result = runner.invoke(app, [
+            "download", "--model", "fast",
+            "--cache-dir", str(tmp_path / "cache"),
+        ])
+    assert result.exit_code == 0, result.output
+    assert "NON-COMMERCIAL" not in result.output
+
+
 def test_fast_group_is_apache_only():
     # The NC-licensed 1.3B fast artifact must never ride along with the
     # "fast" group; it is explicit-name-only.

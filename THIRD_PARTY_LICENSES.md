@@ -125,6 +125,18 @@ license.
 - **Provider:** Quantized and redistributed by QuantStack (base model by Alibaba / Wan-AI)
 - **Use:** GGUF Q4_K_M quantized weights for the `wan-14b-vace-gguf` backend. Explicit-only - `--auto` never selects it.
 
+### LightX2V Step/CFG Distill LoRA for Wan2.1-T2V-14B (optional, fast mode)
+- **License:** Apache 2.0
+- **Source:** https://huggingface.co/lightx2v/Wan2.1-T2V-14B-StepDistill-CfgDistill-Lightx2v
+- **Provider:** LightX2V
+- **Use:** Distilled few-step LoRA fused into the 14B transformer for `--fast` on `wan-14b-vace` (~631 MB).
+
+### Self-Forcing DMD Distill LoRA for Wan2.1-T2V-1.3B (optional, fast mode, NON-COMMERCIAL)
+- **License:** CC-BY-NC-SA-4.0 (inherited from the upstream Self-Forcing weights; **non-commercial use only**)
+- **Source:** https://huggingface.co/Kijai/WanVideo_comfy (LoRA extraction); upstream https://github.com/guandeh17/Self-Forcing
+- **Provider:** Kijai (extraction), Self-Forcing authors (weights)
+- **Use:** Distilled few-step LoRA fused into the 1.3B transformer for `--fast` on `wan-1.3b-vace` (~91 MB). Downloaded only when explicitly requested via `motion-mirror download --model wan-fast-1.3b`; never part of the `fast` download group. Motion Mirror code remains MIT.
+
 ### UMT5-XXL Text Encoder
 - **License:** Apache 2.0
 - **Source:** Bundled within the Wan2.1-VACE-1.3B checkpoint
@@ -169,3 +181,8 @@ https://huggingface.co/Wan-AI for complete terms.
 
 Motion Mirror does not impose any additional restrictions on generated outputs
 beyond those of the upstream model licenses.
+
+**Exception - 1.3B fast mode:** outputs generated with `--fast` on
+`wan-1.3b-vace` use the Self-Forcing distill LoRA, which is CC-BY-NC-SA-4.0.
+Those outputs are restricted to non-commercial use. The 14B fast LoRA
+(LightX2V) is Apache 2.0 and carries no such restriction.

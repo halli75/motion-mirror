@@ -513,10 +513,15 @@ def test_resolve_generation_settings_explicit_values_beat_fast():
     assert resolve_generation_settings(cfg, "wan-14b-vace") == (20, 3.0, 5.0)
 
 
-def test_resolve_generation_settings_fast_unsupported_backend_raises():
+def test_resolve_generation_settings_fast_1_3b_defaults():
     cfg = MotionMirrorConfig(device="cpu", fast=True)
+    assert resolve_generation_settings(cfg, "wan-1.3b-vace") == (4, 1.0, 5.0)
+
+
+def test_resolve_generation_settings_fast_unsupported_backend_raises():
+    cfg = MotionMirrorConfig(device="cpu", fast=True, backend="wan-14b-vace-gguf")
     with pytest.raises(ValueError, match="not supported"):
-        resolve_generation_settings(cfg, "wan-1.3b-vace")
+        resolve_generation_settings(cfg, "wan-14b-vace-gguf")
 
 
 def test_resolve_generation_settings_fast_mock_is_noop():
@@ -551,12 +556,54 @@ def test_vace_fast_14b_missing_lora_names_download_command(tmp_path):
             generate_with_vace(req, cfg)
 
 
-def test_vace_fast_on_1_3b_raises_until_supported(tmp_path):
+def _seed_fast_1_3b_lora(cfg: MotionMirrorConfig) -> Path:
+    path = (
+        cfg.model_cache("wan-fast-1.3b")
+        / "LoRAs"
+        / "Wan2_1_self_forcing_1_3B"
+        / "Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\x00" * 16)
+    return path
+
+
+def test_vace_fast_1_3b_applies_lora_and_prints_nc_warning(tmp_path, capsys):
+    req, cfg = _vace_pipeline_request(tmp_path, fast=True)
+    lora_path = _seed_fast_1_3b_lora(cfg)
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        generate_with_vace(req, cfg)
+
+    pipe = FakePipe.last_instance
+    call = pipe.calls[0]
+    assert call["num_inference_steps"] == 4
+    assert call["guidance_scale"] == 1.0
+    assert pipe.scheduler.flow_shift == 5.0
+    assert pipe.events[0] == ("load_lora_weights", str(lora_path))
+    assert "NON-COMMERCIAL" in capsys.readouterr().out
+
+
+def test_vace_fast_1_3b_missing_lora_names_artifact_and_nc(tmp_path):
     req, cfg = _vace_pipeline_request(tmp_path, fast=True)
 
     with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
-        with pytest.raises(ValueError, match="not supported"):
+        with pytest.raises(FileNotFoundError) as exc_info:
             generate_with_vace(req, cfg)
+
+    msg = str(exc_info.value)
+    assert "download --model wan-fast-1.3b" in msg
+    assert "NON-COMMERCIAL" in msg
+
+
+def test_vace_fast_14b_prints_no_license_warning(tmp_path, capsys):
+    req, cfg = _vace_pipeline_request(tmp_path, backend="wan-14b-vace", fast=True)
+    _seed_fast_14b_lora(cfg)
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        generate_with_vace(req, cfg)
+
+    assert "NON-COMMERCIAL" not in capsys.readouterr().out
 
 
 def _seed_lora_file(tmp_path: Path) -> Path:

@@ -133,6 +133,20 @@ _MODEL_SPECS: dict[str, dict] = {
         "cache_subdir": "wan-fast-14b-lora",
         "label": "LightX2V 14B step/CFG distill LoRA (~631 MB, Apache-2.0) [--fast on wan-14b-vace]",
     },
+    "wan-fast-1.3b": {
+        "repo_id": "Kijai/WanVideo_comfy",
+        "filename": "LoRAs/Wan2_1_self_forcing_1_3B/Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors",
+        "expected_bytes": 91_233_416,
+        "cache_subdir": "wan-fast-1.3b",
+        "label": "Self-Forcing DMD 1.3B distill LoRA (~91 MB, NON-COMMERCIAL) [--fast on wan-1.3b-vace]",
+        "license_warning": (
+            "NON-COMMERCIAL ONLY: these 1.3B fast weights derive from "
+            "Self-Forcing (CC-BY-NC-SA-4.0). Generated outputs may not be "
+            "used commercially. Motion Mirror code itself remains MIT.\n"
+            "Source: https://huggingface.co/Kijai/WanVideo_comfy "
+            "(upstream: https://github.com/guandeh17/Self-Forcing)"
+        ),
+    },
     "wan-14b-vace-base": {
         "repo_id": "Wan-AI/Wan2.1-VACE-14B-diffusers",
         "filename": None,
@@ -286,9 +300,10 @@ def download(
             "Model(s) to download: all | dwpose | vace | vace-14b | "
             "vace-14b-gguf | extras | fast | wan-1.3b-vace | wan-14b-vace | "
             "wan-14b-vace-gguf | wan-14b-vace-base | wan-fast-14b-lora | "
-            "sam2 | dwpose-pose | dwpose-det. NOTE: 'all' is the validated "
-            "~6 GB lineup only; the ~75 GB / ~24 GB 14B backends must be "
-            "requested explicitly."
+            "wan-fast-1.3b | sam2 | dwpose-pose | dwpose-det. NOTE: 'all' is "
+            "the validated ~6 GB lineup only; the ~75 GB / ~24 GB 14B "
+            "backends must be requested explicitly, and wan-fast-1.3b "
+            "(NON-COMMERCIAL license) is deliberately excluded from 'fast'."
         ),
     ),
     cache_dir: Optional[Path] = typer.Option(None, help="Override default cache directory."),
@@ -332,6 +347,13 @@ def download(
         dest_dir = cfg.model_cache(spec["cache_subdir"])
         label = spec["label"]
         already_cached = _is_spec_cached(dest_dir, spec)
+
+        if spec.get("license_warning"):
+            from rich.panel import Panel
+
+            console.print(
+                Panel(spec["license_warning"], border_style="red", title="LICENSE WARNING")
+            )
 
         if spec["filename"] is not None:
             dest_file = dest_dir / spec["filename"]

@@ -56,6 +56,23 @@ _FAST_BACKEND_SPECS: dict[str, dict] = {
             "loras/Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors"
         ),
         "steps": 4,
+        "download_model": "fast",
+    },
+    "wan-1.3b-vace": {
+        "artifact": "wan-fast-1.3b",
+        "cache_subdir": "wan-fast-1.3b",
+        "lora_filename": (
+            "LoRAs/Wan2_1_self_forcing_1_3B/"
+            "Wan2_1_self_forcing_dmd_1_3B_lora_rank_32_fp16.safetensors"
+        ),
+        "steps": 4,
+        # Deliberately excluded from the "fast" download group: NC license.
+        "download_model": "wan-fast-1.3b",
+        "license_warning": (
+            "NON-COMMERCIAL ONLY: the 1.3B fast weights derive from "
+            "Self-Forcing (CC-BY-NC-SA-4.0). Generated outputs may not be "
+            "used commercially. Motion Mirror code itself remains MIT."
+        ),
     },
 }
 
@@ -191,6 +208,17 @@ def _generate_vace(
         config, spec["name"]
     )
     fast_spec = _FAST_BACKEND_SPECS.get(spec["name"]) if config.fast else None
+    if fast_spec is not None and fast_spec.get("license_warning"):
+        from rich.console import Console as _RichConsole
+        from rich.panel import Panel as _RichPanel
+
+        _RichConsole().print(
+            _RichPanel(
+                fast_spec["license_warning"],
+                border_style="red",
+                title="LICENSE WARNING",
+            )
+        )
 
     if is_gguf and config.lora is not None:
         raise ValueError(
@@ -435,9 +463,15 @@ def _resolve_gguf_transformer_path(config: MotionMirrorConfig, spec: dict) -> Pa
 def _resolve_fast_lora_path(config: MotionMirrorConfig, fast_spec: dict) -> Path:
     path = config.model_cache(fast_spec["cache_subdir"]) / fast_spec["lora_filename"]
     if not path.is_file() or path.stat().st_size == 0:
+        nc_note = (
+            " (NOTE: these weights are NON-COMMERCIAL, CC-BY-NC-SA-4.0)"
+            if fast_spec.get("license_warning")
+            else ""
+        )
         raise FileNotFoundError(
             f"Fast-mode LoRA not found: {path}.\n"
-            "Run: motion-mirror download --model fast"
+            f"Run: motion-mirror download --model {fast_spec['download_model']}"
+            f"{nc_note}"
         )
     return path
 

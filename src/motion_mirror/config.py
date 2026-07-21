@@ -46,6 +46,11 @@ class MotionMirrorConfig:
     # Classifier-free guidance scale. None = backend default (5.0). Distilled
     # few-step generation wants 1.0 (CFG off).
     guidance_scale: float | None = None
+    # Optional LoRA applied to the transformer before generation. Accepts a
+    # local .safetensors path, a HF repo id, or "repo_id:filename".
+    # Not supported on GGUF-quantized backends (diffusers limitation).
+    lora: str | None = None
+    lora_scale: float = 1.0
     device: str = "cuda"         # "cuda" | "cpu"
 
     # VRAM optimization flags
@@ -90,6 +95,10 @@ class MotionMirrorConfig:
         if self.guidance_scale is not None and self.guidance_scale <= 0:
             raise ValueError(
                 f"guidance_scale must be > 0, got {self.guidance_scale}"
+            )
+        if self.lora_scale <= 0:
+            raise ValueError(
+                f"lora_scale must be > 0, got {self.lora_scale}"
             )
 
         for field_name, allowed in (

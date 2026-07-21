@@ -34,6 +34,15 @@ def test_guidance_scale_validation():
         MotionMirrorConfig(guidance_scale=-2.5)
 
 
+def test_lora_defaults_and_validation():
+    c = MotionMirrorConfig()
+    assert c.lora is None
+    assert c.lora_scale == 1.0
+    assert MotionMirrorConfig(lora_scale=0.5).lora_scale == 0.5
+    with pytest.raises(ValueError, match="lora_scale"):
+        MotionMirrorConfig(lora_scale=0)
+
+
 def test_output_dir():
     c = MotionMirrorConfig(project_root=Path("/tmp/proj"))
     assert c.output_dir == Path("/tmp/proj/outputs")

@@ -1,6 +1,7 @@
 """Wan2.1 VACE generation backend."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import cv2
@@ -133,6 +134,12 @@ def _generate_vace(
     _validate_vace_inputs(request)
     is_gguf = spec.get("gguf_filename") is not None
 
+    if is_gguf and config.lora is not None:
+        raise ValueError(
+            "LoRA cannot be applied to GGUF-quantized backends "
+            "(diffusers limitation); use wan-14b-vace instead."
+        )
+
     if is_gguf:
         transformer_path = _resolve_gguf_transformer_path(config, spec)
     else:
@@ -204,6 +211,15 @@ def _generate_vace(
             vae=vae,
             torch_dtype=dtype,
         )
+
+    if config.lora is not None:
+        # Fuse-then-unload: zero runtime adapter overhead, and fused weights
+        # survive the offload hooks installed later by _apply_memory_policy
+        # (loading after sequential offload would hit meta tensors).
+        lora_path = _resolve_lora_path(config, config.lora)
+        pipe.load_lora_weights(lora_path)
+        pipe.fuse_lora(lora_scale=config.lora_scale)
+        pipe.unload_lora_weights()
 
     flow_shift = 5.0 if max(out_w, out_h) >= 720 else 3.0
     pipe.scheduler = UniPCMultistepScheduler.from_config(
@@ -348,6 +364,47 @@ def _resolve_gguf_transformer_path(config: MotionMirrorConfig, spec: dict) -> Pa
             f"Run: motion-mirror download --model {spec['download_group']}"
         )
     return transformer_path
+
+
+def _resolve_lora_path(config: MotionMirrorConfig, lora: str) -> str:
+    """Resolve a LoRA reference to a local file path.
+
+    Accepts a local .safetensors path, "repo_id:filename", or a bare repo id
+    (only when the repo contains exactly one .safetensors file).
+    """
+    local = Path(lora)
+    if local.is_file():
+        return str(local)
+
+    # A path-looking string that does not exist is a user error, not a repo
+    # id. Windows drive letters contain ':', so this must precede the
+    # repo:filename split.
+    if "\\" in lora or re.match(r"^[A-Za-z]:[\\/]", lora) or local.is_absolute():
+        raise FileNotFoundError(f"LoRA file not found: {lora}")
+
+    from huggingface_hub import hf_hub_download, snapshot_download
+
+    lora_dir = config.model_cache("loras")
+    if ":" in lora:
+        repo_id, filename = lora.split(":", 1)
+        return hf_hub_download(
+            repo_id=repo_id, filename=filename, local_dir=str(lora_dir)
+        )
+
+    snapshot_dir = Path(
+        snapshot_download(
+            repo_id=lora,
+            allow_patterns=["*.safetensors"],
+            local_dir=str(lora_dir / lora.replace("/", "--")),
+        )
+    )
+    candidates = sorted(snapshot_dir.rglob("*.safetensors"))
+    if len(candidates) != 1:
+        raise ValueError(
+            f"LoRA repo {lora!r} contains {len(candidates)} .safetensors files; "
+            "specify one as 'repo_id:filename'."
+        )
+    return str(candidates[0])
 
 
 def _resolve_device(config: MotionMirrorConfig, torch: object) -> str:

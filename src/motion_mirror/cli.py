@@ -165,6 +165,8 @@ def run(
     frames: Optional[int] = typer.Option(None, help="Number of output frames."),
     steps: Optional[int] = typer.Option(None, help="Denoising steps (1-200; higher = sharper, slower)."),
     guidance_scale: Optional[float] = typer.Option(None, "--guidance-scale", help="Classifier-free guidance scale (> 0; default 5.0, use 1.0 to disable CFG)."),
+    lora: Optional[str] = typer.Option(None, "--lora", help="LoRA to apply: local .safetensors path, HF repo id, or repo_id:filename. Not supported on GGUF backends."),
+    lora_scale: Optional[float] = typer.Option(None, "--lora-scale", help="LoRA fuse strength (> 0; default 1.0)."),
     density: Optional[int] = typer.Option(None, help="Trajectory density (512 = default, 1024 = HQ)."),
     device: Optional[str] = typer.Option(None, help="Compute device: cuda | cpu."),
     output_dir: Optional[Path] = typer.Option(None, help="Output directory (default: ./outputs)."),
@@ -187,6 +189,10 @@ def run(
         cfg_kwargs["device"] = preset_data.get("device", "cuda")
         if "guidance_scale" in preset_data:
             cfg_kwargs["guidance_scale"] = preset_data["guidance_scale"]
+        if "lora" in preset_data:
+            cfg_kwargs["lora"] = preset_data["lora"]
+        if "lora_scale" in preset_data:
+            cfg_kwargs["lora_scale"] = preset_data["lora_scale"]
         if "offload_model" in preset_data:
             cfg_kwargs["offload_model"] = preset_data["offload_model"]
         if "t5_cpu" in preset_data:
@@ -208,6 +214,10 @@ def run(
         cfg_kwargs["num_inference_steps"] = steps
     if guidance_scale is not None:
         cfg_kwargs["guidance_scale"] = guidance_scale
+    if lora is not None:
+        cfg_kwargs["lora"] = lora
+    if lora_scale is not None:
+        cfg_kwargs["lora_scale"] = lora_scale
     if density is not None:
         cfg_kwargs["trajectory_density"] = density
     if device is not None:

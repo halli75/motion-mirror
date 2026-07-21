@@ -306,6 +306,9 @@ class FakePipe:
         self.attention_slicing = None
         self.sequential_offload_called = False
         self.model_cpu_offload_called = False
+        # Ordered log of lifecycle calls, for asserting e.g. that LoRA
+        # fusing happens before any device placement / offload.
+        self.events = []
         FakePipe.last_instance = self
 
     @classmethod
@@ -320,13 +323,25 @@ class FakePipe:
 
     def enable_sequential_cpu_offload(self):
         self.sequential_offload_called = True
+        self.events.append(("enable_sequential_cpu_offload",))
 
     def enable_model_cpu_offload(self):
         self.model_cpu_offload_called = True
+        self.events.append(("enable_model_cpu_offload",))
 
     def to(self, device):
         self.device = device
+        self.events.append(("to", device))
         return self
+
+    def load_lora_weights(self, path, **kwargs):
+        self.events.append(("load_lora_weights", str(path)))
+
+    def fuse_lora(self, lora_scale=1.0):
+        self.events.append(("fuse_lora", lora_scale))
+
+    def unload_lora_weights(self):
+        self.events.append(("unload_lora_weights",))
 
     def __call__(self, **kwargs):
         self.calls.append(kwargs)
@@ -468,6 +483,75 @@ def test_vace_pipe_receives_configured_guidance_scale(tmp_path):
 
     call = FakePipe.last_instance.calls[0]
     assert call["guidance_scale"] == 1.0
+
+
+def _seed_lora_file(tmp_path: Path) -> Path:
+    lora_file = tmp_path / "my_lora.safetensors"
+    lora_file.write_bytes(b"\x00" * 16)
+    return lora_file
+
+
+def test_vace_no_lora_makes_no_lora_calls(tmp_path):
+    req, cfg = _vace_pipeline_request(tmp_path)
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        generate_with_vace(req, cfg)
+
+    events = FakePipe.last_instance.events
+    assert not any(e[0].endswith("lora_weights") or e[0] == "fuse_lora" for e in events)
+
+
+def test_vace_local_lora_loads_fuses_unloads_in_order(tmp_path):
+    lora_file = _seed_lora_file(tmp_path)
+    req, cfg = _vace_pipeline_request(
+        tmp_path, lora=str(lora_file), lora_scale=0.8
+    )
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        generate_with_vace(req, cfg)
+
+    events = FakePipe.last_instance.events
+    assert events[:3] == [
+        ("load_lora_weights", str(lora_file)),
+        ("fuse_lora", 0.8),
+        ("unload_lora_weights",),
+    ]
+
+
+def test_vace_lora_applied_before_offload(tmp_path):
+    """LoRA fuse must precede sequential offload (meta-tensor hazard)."""
+    lora_file = _seed_lora_file(tmp_path)
+    req, cfg = _vace_pipeline_request(
+        tmp_path, device="cuda", offload_model=True, lora=str(lora_file)
+    )
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=True)):
+        generate_with_vace(req, cfg)
+
+    events = FakePipe.last_instance.events
+    names = [e[0] for e in events]
+    assert names.index("fuse_lora") < names.index("enable_sequential_cpu_offload")
+
+
+def test_vace_lora_on_gguf_backend_raises(tmp_path):
+    lora_file = _seed_lora_file(tmp_path)
+    req, cfg = _vace_pipeline_request(
+        tmp_path, backend="wan-14b-vace-gguf", lora=str(lora_file)
+    )
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        with pytest.raises(ValueError, match="GGUF"):
+            generate_with_vace(req, cfg)
+
+
+def test_vace_missing_local_lora_file_raises(tmp_path):
+    req, cfg = _vace_pipeline_request(
+        tmp_path, lora=str(tmp_path / "nope.safetensors")
+    )
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        with pytest.raises(FileNotFoundError, match="LoRA"):
+            generate_with_vace(req, cfg)
 
 
 def test_vace_offload_model_enables_sequential_cpu_offload(tmp_path):

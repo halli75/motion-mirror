@@ -1,17 +1,16 @@
-"""Parity tests between repo-root presets/ and the packaged presets.
+"""Validation of the packaged generation presets.
 
 The CLI loads presets exclusively via importlib.resources from
-``motion_mirror/presets`` (see cli.py). The repo-root ``presets/``
-directory is only for browsing/docs and must mirror the packaged
-files exactly so users never read stale values.
+``motion_mirror/presets`` (see cli.py).
 """
 from __future__ import annotations
 
 import importlib.resources
-from pathlib import Path
+import tomllib
 
-REPO_ROOT_PRESETS = Path(__file__).resolve().parent.parent / "presets"
 PACKAGED_PRESETS = importlib.resources.files("motion_mirror") / "presets"
+
+REQUIRED_FIELDS = ("name", "description", "backend", "resolution", "num_frames")
 
 
 def _packaged_toml_files() -> list:
@@ -21,35 +20,28 @@ def _packaged_toml_files() -> list:
     )
 
 
-def test_preset_filename_sets_match():
-    root_names = {p.name for p in REPO_ROOT_PRESETS.glob("*.toml")}
-    packaged_names = {p.name for p in _packaged_toml_files()}
-    assert root_names == packaged_names, (
-        f"repo-root presets/ drifted from packaged presets: "
-        f"missing at root={sorted(packaged_names - root_names)}, "
-        f"extra at root={sorted(root_names - packaged_names)}"
-    )
+def test_presets_exist():
+    names = {p.name for p in _packaged_toml_files()}
+    assert {"default.toml", "low-vram.toml", "mock.toml"} <= names
 
 
-def test_preset_contents_match():
+def test_presets_parse_with_required_fields():
     for packaged in _packaged_toml_files():
-        root_file = REPO_ROOT_PRESETS / packaged.name
-        assert root_file.is_file(), f"repo-root presets/ is missing {packaged.name}"
-        assert root_file.read_text(encoding="utf-8") == packaged.read_text(encoding="utf-8"), (
-            f"repo-root presets/{packaged.name} content differs from packaged copy"
-        )
+        data = tomllib.loads(packaged.read_text(encoding="utf-8"))
+        assert "preset" in data, f"{packaged.name} is missing the [preset] table"
+        preset = data["preset"]
+        for field in REQUIRED_FIELDS:
+            assert field in preset, f"{packaged.name} is missing '{field}'"
+        assert preset["name"] == packaged.name.removesuffix(".toml")
 
 
 def test_vace_presets_satisfy_frame_constraint():
     """The real VACE path requires num_frames = 4k+1; shipped presets must comply."""
-    import tomllib
-
     for packaged in _packaged_toml_files():
-        data = tomllib.loads(packaged.read_text(encoding="utf-8")).get("preset", {})
-        if data.get("backend") == "mock":
+        preset = tomllib.loads(packaged.read_text(encoding="utf-8"))["preset"]
+        if preset["backend"] == "mock":
             continue
-        frames = data.get("num_frames")
-        assert frames is not None, f"{packaged.name} is missing num_frames"
+        frames = preset["num_frames"]
         assert (frames - 1) % 4 == 0, (
             f"{packaged.name}: num_frames={frames} violates the VACE 4k+1 frame rule"
         )

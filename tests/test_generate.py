@@ -13,7 +13,7 @@ from PIL import Image
 
 from motion_mirror.config import MotionMirrorConfig
 from motion_mirror.generate.models import GenerationRequest
-from motion_mirror.generate.vace import generate_with_vace
+from motion_mirror.generate.vace import generate_with_vace, resolve_generation_settings
 from motion_mirror.types import GenerationResult
 
 
@@ -483,6 +483,80 @@ def test_vace_pipe_receives_configured_guidance_scale(tmp_path):
 
     call = FakePipe.last_instance.calls[0]
     assert call["guidance_scale"] == 1.0
+
+
+def _seed_fast_14b_lora(cfg: MotionMirrorConfig) -> Path:
+    path = (
+        cfg.model_cache("wan-fast-14b-lora")
+        / "loras"
+        / "Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\x00" * 16)
+    return path
+
+
+def test_resolve_generation_settings_normal_defaults():
+    cfg = MotionMirrorConfig(device="cpu")
+    assert resolve_generation_settings(cfg, "wan-1.3b-vace") == (30, 5.0, None)
+
+
+def test_resolve_generation_settings_fast_14b_defaults():
+    cfg = MotionMirrorConfig(device="cpu", fast=True, backend="wan-14b-vace")
+    assert resolve_generation_settings(cfg, "wan-14b-vace") == (4, 1.0, 5.0)
+
+
+def test_resolve_generation_settings_explicit_values_beat_fast():
+    cfg = MotionMirrorConfig(
+        device="cpu", fast=True, num_inference_steps=20, guidance_scale=3.0
+    )
+    assert resolve_generation_settings(cfg, "wan-14b-vace") == (20, 3.0, 5.0)
+
+
+def test_resolve_generation_settings_fast_unsupported_backend_raises():
+    cfg = MotionMirrorConfig(device="cpu", fast=True)
+    with pytest.raises(ValueError, match="not supported"):
+        resolve_generation_settings(cfg, "wan-1.3b-vace")
+
+
+def test_resolve_generation_settings_fast_mock_is_noop():
+    cfg = MotionMirrorConfig(device="cpu", fast=True, backend="mock")
+    assert resolve_generation_settings(cfg, "mock") == (30, 5.0, None)
+
+
+def test_vace_fast_14b_applies_lora_steps_guidance_shift(tmp_path):
+    req, cfg = _vace_pipeline_request(tmp_path, backend="wan-14b-vace", fast=True)
+    lora_path = _seed_fast_14b_lora(cfg)
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        generate_with_vace(req, cfg)
+
+    pipe = FakePipe.last_instance
+    call = pipe.calls[0]
+    assert call["num_inference_steps"] == 4
+    assert call["guidance_scale"] == 1.0
+    assert pipe.scheduler.flow_shift == 5.0
+    assert pipe.events[:3] == [
+        ("load_lora_weights", str(lora_path)),
+        ("fuse_lora", 1.0),
+        ("unload_lora_weights",),
+    ]
+
+
+def test_vace_fast_14b_missing_lora_names_download_command(tmp_path):
+    req, cfg = _vace_pipeline_request(tmp_path, backend="wan-14b-vace", fast=True)
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        with pytest.raises(FileNotFoundError, match="download --model fast"):
+            generate_with_vace(req, cfg)
+
+
+def test_vace_fast_on_1_3b_raises_until_supported(tmp_path):
+    req, cfg = _vace_pipeline_request(tmp_path, fast=True)
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        with pytest.raises(ValueError, match="not supported"):
+            generate_with_vace(req, cfg)
 
 
 def _seed_lora_file(tmp_path: Path) -> Path:

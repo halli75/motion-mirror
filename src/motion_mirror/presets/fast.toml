@@ -1,0 +1,9 @@
+[preset]
+name = "fast"
+description = "Fast distilled generation - 14B backend, 4 steps, CFG off"
+backend = "wan-14b-vace"
+resolution = "832x480"
+num_frames = 81
+trajectory_density = 512
+device = "cuda"
+fast = true

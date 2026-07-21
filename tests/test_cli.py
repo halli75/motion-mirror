@@ -120,6 +120,22 @@ def test_wan_14b_vace_base_spec_shape():
     assert "model_index.json" in spec["allow_patterns"]
 
 
+def test_wan_fast_14b_lora_spec_shape():
+    spec = _MODEL_SPECS["wan-fast-14b-lora"]
+    assert spec["repo_id"] == "lightx2v/Wan2.1-T2V-14B-StepDistill-CfgDistill-Lightx2v"
+    assert spec["filename"] == (
+        "loras/Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors"
+    )
+    assert spec["expected_bytes"] == 631_344_264
+    assert spec["cache_subdir"] == "wan-fast-14b-lora"
+
+
+def test_fast_group_is_apache_only():
+    # The NC-licensed 1.3B fast artifact must never ride along with the
+    # "fast" group; it is explicit-name-only.
+    assert _MODEL_GROUPS["fast"] == ["wan-fast-14b-lora"]
+
+
 def test_download_snapshot_passes_allow_patterns(tmp_path):
     spec = _MODEL_SPECS["wan-14b-vace-base"]
     fake_usage = SimpleNamespace(free=10 ** 15)  # plenty of free space
@@ -280,6 +296,37 @@ def test_run_rejects_nonpositive_guidance_scale(tmp_path):
         "--frames", "3", "--guidance-scale", "0", "--density", "16", "--device", "cpu",
     ])
     assert result.exit_code != 0
+
+
+def test_run_fast_plus_lora_is_rejected(tmp_path):
+    img = _make_image(tmp_path / "char.png")
+    vid = _make_video(tmp_path / "motion.mp4", frames=5)
+    result = runner.invoke(app, [
+        "run", str(img), str(vid),
+        "--backend", "mock", "--resolution", "64x32",
+        "--frames", "3", "--density", "16", "--device", "cpu",
+        "--fast", "--lora", "some/repo",
+    ])
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output
+
+
+def test_run_fast_with_mock_backend_is_noop(tmp_path):
+    img = _make_image(tmp_path / "char.png")
+    vid = _make_video(tmp_path / "motion.mp4", frames=5)
+    result = runner.invoke(app, [
+        "run", str(img), str(vid),
+        "--backend", "mock", "--resolution", "64x32",
+        "--frames", "3", "--density", "16", "--device", "cpu",
+        "--fast",
+        "--output-dir", str(tmp_path / "out"),
+    ])
+    assert result.exit_code == 0, result.output
+
+
+def test_presets_list_shows_fast():
+    result = runner.invoke(app, ["presets", "--list"])
+    assert "fast" in result.output
 
 
 def test_run_rejects_out_of_range_steps(tmp_path):

@@ -42,7 +42,9 @@ class MotionMirrorConfig:
 
     resolution: str = "832x480"  # WxH string
     num_frames: int = 81         # 81 frames = ~5 s at 16 fps
-    num_inference_steps: int = 30  # denoising steps; higher = sharper, slower
+    # Denoising steps; higher = sharper, slower. None = resolved default:
+    # 30 normally, or the per-backend fast-mode step count when fast=True.
+    num_inference_steps: int | None = None
     # Classifier-free guidance scale. None = backend default (5.0). Distilled
     # few-step generation wants 1.0 (CFG off).
     guidance_scale: float | None = None
@@ -51,6 +53,9 @@ class MotionMirrorConfig:
     # Not supported on GGUF-quantized backends (diffusers limitation).
     lora: str | None = None
     lora_scale: float = 1.0
+    # Curated fast/distilled generation: per-backend distill artifact,
+    # few-step defaults, CFG off. Mutually exclusive with `lora`.
+    fast: bool = False
     device: str = "cuda"         # "cuda" | "cpu"
 
     # VRAM optimization flags
@@ -87,7 +92,7 @@ class MotionMirrorConfig:
             raise ValueError(
                 f"num_frames must be >= 1, got {self.num_frames}"
             )
-        if not 1 <= self.num_inference_steps <= 200:
+        if self.num_inference_steps is not None and not 1 <= self.num_inference_steps <= 200:
             raise ValueError(
                 f"num_inference_steps must be in [1, 200], got "
                 f"{self.num_inference_steps}"

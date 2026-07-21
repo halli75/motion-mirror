@@ -43,6 +43,27 @@ _VACE_BACKEND_SPECS: dict[str, dict] = {
         "download_group": "vace-14b-gguf",
     },
 }
+# Fast-mode (distilled few-step) artifacts, keyed by backend. Backends absent
+# here reject --fast. `lora_filename` entries are runtime LoRAs fused into the
+# transformer; the abandoned LightX2V-runtime attempt proved the recipe
+# (4 steps, CFG off, shift 5.0) but died on flash_attn deps - the diffusers
+# load_lora_weights path used here avoids that stack entirely.
+_FAST_BACKEND_SPECS: dict[str, dict] = {
+    "wan-14b-vace": {
+        "artifact": "wan-fast-14b-lora",
+        "cache_subdir": "wan-fast-14b-lora",
+        "lora_filename": (
+            "loras/Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors"
+        ),
+        "steps": 4,
+    },
+}
+
+_DEFAULT_INFERENCE_STEPS = 30
+_DEFAULT_GUIDANCE_SCALE = 5.0
+_FAST_GUIDANCE_SCALE = 1.0  # CFG off - distilled students are CFG-free
+_FAST_FLOW_SHIFT = 5.0
+
 # Describe the desired subject, NEVER the conditioning mechanism: the text
 # prompt dominates subject choice, and naming the control signal ("skeleton")
 # made VACE render an anatomical skeleton instead of the reference character
@@ -97,6 +118,38 @@ def generate_with_vace(
     return _generate_vace(request, cfg, out_w, out_h, spec)
 
 
+def resolve_generation_settings(
+    config: MotionMirrorConfig, backend: str
+) -> tuple[int, float, float | None]:
+    """Resolve (num_inference_steps, guidance_scale, flow_shift_override).
+
+    Pure. Precedence: explicit config value > fast-mode default > normal
+    default. The flow-shift override is None unless fast mode forces one.
+    Raises if fast mode is requested for a backend with no distill artifact.
+    """
+    fast_spec = _FAST_BACKEND_SPECS.get(backend) if config.fast else None
+    if config.fast and fast_spec is None and backend != "mock":
+        raise ValueError(
+            f"--fast is not supported for backend {backend!r}. "
+            f"Fast-capable backends: {sorted(_FAST_BACKEND_SPECS)}."
+        )
+
+    default_steps = fast_spec["steps"] if fast_spec else _DEFAULT_INFERENCE_STEPS
+    steps = (
+        config.num_inference_steps
+        if config.num_inference_steps is not None
+        else default_steps
+    )
+    default_guidance = _FAST_GUIDANCE_SCALE if fast_spec else _DEFAULT_GUIDANCE_SCALE
+    guidance = (
+        config.guidance_scale
+        if config.guidance_scale is not None
+        else default_guidance
+    )
+    flow_shift = _FAST_FLOW_SHIFT if fast_spec else None
+    return steps, guidance, flow_shift
+
+
 def _generate_mock(
     request: GenerationRequest,
     out_w: int,
@@ -133,6 +186,11 @@ def _generate_vace(
 ) -> GenerationResult:
     _validate_vace_inputs(request)
     is_gguf = spec.get("gguf_filename") is not None
+
+    steps, guidance_scale, flow_shift_override = resolve_generation_settings(
+        config, spec["name"]
+    )
+    fast_spec = _FAST_BACKEND_SPECS.get(spec["name"]) if config.fast else None
 
     if is_gguf and config.lora is not None:
         raise ValueError(
@@ -212,16 +270,24 @@ def _generate_vace(
             torch_dtype=dtype,
         )
 
-    if config.lora is not None:
+    if fast_spec is not None and "lora_filename" in fast_spec:
+        lora_path = _resolve_fast_lora_path(config, fast_spec)
+    elif config.lora is not None:
+        lora_path = _resolve_lora_path(config, config.lora)
+    else:
+        lora_path = None
+    if lora_path is not None:
         # Fuse-then-unload: zero runtime adapter overhead, and fused weights
         # survive the offload hooks installed later by _apply_memory_policy
         # (loading after sequential offload would hit meta tensors).
-        lora_path = _resolve_lora_path(config, config.lora)
         pipe.load_lora_weights(lora_path)
         pipe.fuse_lora(lora_scale=config.lora_scale)
         pipe.unload_lora_weights()
 
-    flow_shift = 5.0 if max(out_w, out_h) >= 720 else 3.0
+    if flow_shift_override is not None:
+        flow_shift = flow_shift_override
+    else:
+        flow_shift = 5.0 if max(out_w, out_h) >= 720 else 3.0
     pipe.scheduler = UniPCMultistepScheduler.from_config(
         pipe.scheduler.config,
         flow_shift=flow_shift,
@@ -260,8 +326,8 @@ def _generate_vace(
             height=height,
             width=width,
             num_frames=request.frames,
-            num_inference_steps=config.num_inference_steps,
-            guidance_scale=config.guidance_scale if config.guidance_scale is not None else 5.0,
+            num_inference_steps=steps,
+            guidance_scale=guidance_scale,
             generator=generator,
         ).frames[0]
 
@@ -364,6 +430,16 @@ def _resolve_gguf_transformer_path(config: MotionMirrorConfig, spec: dict) -> Pa
             f"Run: motion-mirror download --model {spec['download_group']}"
         )
     return transformer_path
+
+
+def _resolve_fast_lora_path(config: MotionMirrorConfig, fast_spec: dict) -> Path:
+    path = config.model_cache(fast_spec["cache_subdir"]) / fast_spec["lora_filename"]
+    if not path.is_file() or path.stat().st_size == 0:
+        raise FileNotFoundError(
+            f"Fast-mode LoRA not found: {path}.\n"
+            "Run: motion-mirror download --model fast"
+        )
+    return path
 
 
 def _resolve_lora_path(config: MotionMirrorConfig, lora: str) -> str:

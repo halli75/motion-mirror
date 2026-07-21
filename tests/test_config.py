@@ -12,9 +12,10 @@ def test_defaults():
     assert c.backend == "wan-1.3b-vace"
     assert c.resolution == "832x480"
     assert c.num_frames == 81
-    assert c.num_inference_steps == 30
+    assert c.num_inference_steps is None  # None = resolved default (30 / fast)
     assert c.device == "cuda"
     assert c.output_dir_name == "outputs"
+    assert c.fast is False
 
 
 def test_num_inference_steps_validation():

@@ -126,6 +126,13 @@ _MODEL_SPECS: dict[str, dict] = {
         "cache_subdir": "wan-14b-vace-gguf",
         "label": "Wan2.1-VACE-14B Q4_K_M GGUF transformer (~11.6 GB) [backend: wan-14b-vace-gguf]",
     },
+    "wan-fast-14b-lora": {
+        "repo_id": "lightx2v/Wan2.1-T2V-14B-StepDistill-CfgDistill-Lightx2v",
+        "filename": "loras/Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors",
+        "expected_bytes": 631_344_264,
+        "cache_subdir": "wan-fast-14b-lora",
+        "label": "LightX2V 14B step/CFG distill LoRA (~631 MB, Apache-2.0) [--fast on wan-14b-vace]",
+    },
     "wan-14b-vace-base": {
         "repo_id": "Wan-AI/Wan2.1-VACE-14B-diffusers",
         "filename": None,
@@ -143,6 +150,9 @@ _MODEL_GROUPS = {
     "vace-14b": ["wan-14b-vace"],
     "vace-14b-gguf": ["wan-14b-vace-gguf", "wan-14b-vace-base"],
     "extras": ["sam2"],
+    # Apache-licensed fast artifacts only; NC-licensed pieces must be
+    # requested explicitly by name so no one pulls them by accident.
+    "fast": ["wan-fast-14b-lora"],
     # "all" is deliberately the validated ~6 GB lineup only. The 14B backends
     # (~75 GB full, ~24 GB GGUF+base) are GPU-unvalidated and must be requested
     # explicitly via their own model/group keys - growing "all" to ~130 GB
@@ -167,6 +177,7 @@ def run(
     guidance_scale: Optional[float] = typer.Option(None, "--guidance-scale", help="Classifier-free guidance scale (> 0; default 5.0, use 1.0 to disable CFG)."),
     lora: Optional[str] = typer.Option(None, "--lora", help="LoRA to apply: local .safetensors path, HF repo id, or repo_id:filename. Not supported on GGUF backends."),
     lora_scale: Optional[float] = typer.Option(None, "--lora-scale", help="LoRA fuse strength (> 0; default 1.0)."),
+    fast: bool = typer.Option(False, "--fast", help="Fast distilled generation: curated per-backend distill artifact, few steps, CFG off. Weights via: motion-mirror download --model fast."),
     density: Optional[int] = typer.Option(None, help="Trajectory density (512 = default, 1024 = HQ)."),
     device: Optional[str] = typer.Option(None, help="Compute device: cuda | cpu."),
     output_dir: Optional[Path] = typer.Option(None, help="Output directory (default: ./outputs)."),
@@ -184,7 +195,10 @@ def run(
         cfg_kwargs["backend"] = preset_data.get("backend", "wan-1.3b-vace")
         cfg_kwargs["resolution"] = preset_data.get("resolution", "832x480")
         cfg_kwargs["num_frames"] = preset_data.get("num_frames", 81)
-        cfg_kwargs["num_inference_steps"] = preset_data.get("num_inference_steps", 30)
+        # Only inject when the preset names it: an unset value must stay None
+        # so fast-mode step defaults can apply downstream.
+        if "num_inference_steps" in preset_data:
+            cfg_kwargs["num_inference_steps"] = preset_data["num_inference_steps"]
         cfg_kwargs["trajectory_density"] = preset_data.get("trajectory_density", 512)
         cfg_kwargs["device"] = preset_data.get("device", "cuda")
         if "guidance_scale" in preset_data:
@@ -193,6 +207,8 @@ def run(
             cfg_kwargs["lora"] = preset_data["lora"]
         if "lora_scale" in preset_data:
             cfg_kwargs["lora_scale"] = preset_data["lora_scale"]
+        if "fast" in preset_data:
+            cfg_kwargs["fast"] = preset_data["fast"]
         if "offload_model" in preset_data:
             cfg_kwargs["offload_model"] = preset_data["offload_model"]
         if "t5_cpu" in preset_data:
@@ -218,6 +234,8 @@ def run(
         cfg_kwargs["lora"] = lora
     if lora_scale is not None:
         cfg_kwargs["lora_scale"] = lora_scale
+    if fast:
+        cfg_kwargs["fast"] = True
     if density is not None:
         cfg_kwargs["trajectory_density"] = density
     if device is not None:
@@ -233,6 +251,12 @@ def run(
         cfg_kwargs["flow_estimator"] = flow_estimator
     if segmenter is not None:
         cfg_kwargs["segmenter"] = segmenter
+
+    if cfg_kwargs.get("fast") and cfg_kwargs.get("lora"):
+        raise typer.BadParameter(
+            "--fast and --lora are mutually exclusive: --fast applies a "
+            "curated distill LoRA; pick one."
+        )
 
     cfg = MotionMirrorConfig(**cfg_kwargs)
 
@@ -260,10 +284,11 @@ def download(
         "all",
         help=(
             "Model(s) to download: all | dwpose | vace | vace-14b | "
-            "vace-14b-gguf | extras | wan-1.3b-vace | wan-14b-vace | "
-            "wan-14b-vace-gguf | wan-14b-vace-base | sam2 | dwpose-pose | "
-            "dwpose-det. NOTE: 'all' is the validated ~6 GB lineup only; the "
-            "~75 GB / ~24 GB 14B backends must be requested explicitly."
+            "vace-14b-gguf | extras | fast | wan-1.3b-vace | wan-14b-vace | "
+            "wan-14b-vace-gguf | wan-14b-vace-base | wan-fast-14b-lora | "
+            "sam2 | dwpose-pose | dwpose-det. NOTE: 'all' is the validated "
+            "~6 GB lineup only; the ~75 GB / ~24 GB 14B backends must be "
+            "requested explicitly."
         ),
     ),
     cache_dir: Optional[Path] = typer.Option(None, help="Override default cache directory."),

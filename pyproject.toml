@@ -8,14 +8,14 @@ version = "0.4.0a0"
 description = "Local-first motion transfer pipeline for animating a character image from a reference video."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Apache-2.0" }
+license = { text = "MIT" }
 authors = [{ name = "halli75" }]
 keywords = ["motion-transfer", "video-generation", "wan2.1", "vace", "diffusion", "character-animation"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
-  "License :: OSI Approved :: Apache Software License",
+  "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Topic :: Multimedia :: Video",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",

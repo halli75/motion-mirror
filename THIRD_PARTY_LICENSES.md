@@ -1,6 +1,6 @@
 # Third-Party Licenses
 
-Motion Mirror is Apache 2.0 licensed. The following third-party components are
+Motion Mirror is MIT licensed. The following third-party components are
 used at runtime or during model inference. Each component retains its original
 license.
 

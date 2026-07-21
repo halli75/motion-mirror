@@ -41,6 +41,52 @@ def test_build_config_uses_supported_motion_mirror_config_fields(tmp_path):
     assert cfg.num_frames == 17
     assert cfg.num_inference_steps == 50
     assert cfg.trajectory_density == 256
+    # Fast/lora knobs default off so existing matrix entries are unchanged.
+    assert cfg.fast is False
+    assert cfg.guidance_scale is None
+    assert cfg.lora is None
+
+
+def test_build_config_threads_fast_knobs(tmp_path):
+    smoke = _load_smoke_module()
+
+    cfg = smoke._build_config(
+        backend="wan-14b-vace",
+        output_dir=tmp_path / "smoke" / "fast",
+        cache_dir=tmp_path / "cache",
+        resolution="832x480",
+        frames=17,
+        steps=None,
+        density=256,
+        device="cpu",
+        fast=True,
+        guidance_scale=1.0,
+        lora=None,
+    )
+
+    assert cfg.fast is True
+    assert cfg.num_inference_steps is None
+    assert cfg.guidance_scale == 1.0
+
+
+def test_parse_args_accepts_fast_flags():
+    smoke = _load_smoke_module()
+
+    args = smoke._parse_args([
+        "--image", "img.png", "--motion", "vid.mp4",
+        "--backend", "wan-1.3b-vace", "--fast",
+        "--guidance-scale", "1.0",
+    ])
+    assert args.fast is True
+    assert args.guidance_scale == 1.0
+    assert args.steps is None  # default resolved at generation time
+
+    args = smoke._parse_args([
+        "--image", "img.png", "--motion", "vid.mp4",
+        "--backend", "wan-1.3b-vace",
+    ])
+    assert args.fast is False
+    assert args.lora is None
 
 
 # --- content-gate fixtures -------------------------------------------------

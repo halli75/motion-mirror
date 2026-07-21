@@ -25,6 +25,7 @@ V02A_BACKENDS = ("wan-1.3b-vace", "wan-14b-vace", "wan-14b-vace-gguf")
 @dataclass(slots=True)
 class SmokeResult:
     backend: str
+    fast: bool
     ok: bool
     elapsed_s: float
     output_path: str | None
@@ -67,6 +68,9 @@ def main(argv: list[str] | None = None) -> int:
             density=args.density,
             seed=args.seed,
             offload_model=args.offload_model,
+            fast=args.fast,
+            guidance_scale=args.guidance_scale,
+            lora=args.lora,
         )
         for backend in args.backend
     ]
@@ -83,6 +87,9 @@ def main(argv: list[str] | None = None) -> int:
             "frames": args.frames,
             "steps": args.steps,
             "density": args.density,
+            "fast": args.fast,
+            "guidance_scale": args.guidance_scale,
+            "lora": args.lora,
         },
         "results": [asdict(result) for result in results],
     }
@@ -107,9 +114,22 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--report", type=Path, default=Path("outputs/gpu-smoke/report.json"))
     parser.add_argument("--resolution", default="832x480")
     parser.add_argument("--frames", type=int, default=17)
-    parser.add_argument("--steps", type=int, default=30, help="Denoising steps (1-200).")
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=None,
+        help="Denoising steps (1-200). Default: resolved at generation time "
+        "(30 normal, per-backend few-step default with --fast).",
+    )
     parser.add_argument("--density", type=int, default=256)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Fast distilled generation (curated per-backend distill artifact).",
+    )
+    parser.add_argument("--guidance-scale", type=float, default=None)
+    parser.add_argument("--lora", default=None)
     parser.add_argument(
         "--offload-model",
         action=argparse.BooleanOptionalAction,
@@ -158,10 +178,13 @@ def _run_backend(
     cache_dir: Path | None,
     resolution: str,
     frames: int,
-    steps: int,
+    steps: int | None,
     density: int,
     seed: int,
     offload_model: bool = True,
+    fast: bool = False,
+    guidance_scale: float | None = None,
+    lora: str | None = None,
 ) -> SmokeResult:
     start = time.perf_counter()
     output_path: Path | None = None
@@ -181,6 +204,9 @@ def _run_backend(
             density=density,
             device="cuda" if torch.cuda.is_available() else "cpu",
             offload_model=offload_model,
+            fast=fast,
+            guidance_scale=guidance_scale,
+            lora=lora,
         )
         result = MotionMirrorPipeline(cfg).run(image, motion)
         output_path = result.output_path
@@ -200,6 +226,7 @@ def _run_backend(
         )
         return SmokeResult(
             backend=backend,
+            fast=fast,
             ok=output_path.exists() and readable and content_ok,
             elapsed_s=round(time.perf_counter() - start, 2),
             output_path=str(output_path),
@@ -212,6 +239,7 @@ def _run_backend(
     except Exception as exc:  # pragma: no cover - evidence path for manual GPU runs
         return SmokeResult(
             backend=backend,
+            fast=fast,
             ok=False,
             elapsed_s=round(time.perf_counter() - start, 2),
             output_path=str(output_path) if output_path else None,
@@ -230,10 +258,13 @@ def _build_config(
     cache_dir: Path | None,
     resolution: str,
     frames: int,
-    steps: int,
+    steps: int | None,
     density: int,
     device: str,
     offload_model: bool = True,
+    fast: bool = False,
+    guidance_scale: float | None = None,
+    lora: str | None = None,
 ) -> MotionMirrorConfig:
     """Build a config using only supported dataclass fields."""
     return MotionMirrorConfig(
@@ -248,6 +279,9 @@ def _build_config(
         t5_cpu=True,
         device=device,
         cache_dir=cache_dir or MotionMirrorConfig().cache_dir,
+        fast=fast,
+        guidance_scale=guidance_scale,
+        lora=lora,
     )
 
 
@@ -403,7 +437,10 @@ def _check_content(
         return False, f"only {len(frames)} frame(s) decoded"
     stack = np.stack(frames)
 
-    # 1. Actually moves: consecutive frames must differ.
+    # 1. Actually moves: consecutive frames must differ. Fast/distilled runs
+    # (4-8 steps) are held to the same bar - distillation reduces motion
+    # amplitude, so a fast run failing here is a real quality finding, not a
+    # reason to loosen the threshold.
     inter = float(np.abs(np.diff(stack, axis=0)).mean())
     if inter < 0.5:
         return False, f"static output (mean inter-frame diff {inter:.2f})"

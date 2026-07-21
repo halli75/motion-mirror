@@ -394,6 +394,15 @@ else
     record_failure "skip smoke-vace (missing models)"
   fi
 
+  # (1c) 1.3B fast (Self-Forcing DMD LoRA, 4 steps). Baseline (1) vs this run
+  #      is the headline speedup measurement on the cheapest workload.
+  download_group wan-fast-1.3b
+  if group_ok dwpose && group_ok vace && group_ok wan-fast-1.3b; then
+    run_smoke vace-fast wan-1.3b-vace --frames 17 --density 256 --fast
+  else
+    record_failure "skip smoke-vace-fast (missing models)"
+  fi
+
   # (2) gguf 14B BEFORE the full 14B download — the full transformer cache does
   #     not exist yet, so this covers the gguf resolver's base-cache fallback.
   download_group vace-14b-gguf
@@ -403,10 +412,28 @@ else
     record_failure "skip smoke-vace-14b-gguf (missing models)"
   fi
 
+  # (2b) FusionX GGUF fast (pre-merged distilled transformer, 8 steps).
+  #      Answers the "does the FusionX GGUF load via diffusers?" question.
+  download_group wan-14b-vace-fusionx-gguf
+  if group_ok dwpose && group_ok vace-14b-gguf && group_ok wan-14b-vace-fusionx-gguf; then
+    run_smoke vace-14b-gguf-fast wan-14b-vace-gguf --frames 17 --density 256 --fast
+  else
+    record_failure "skip smoke-vace-14b-gguf-fast (missing models)"
+  fi
+
   # (3) full 14B VACE.
   download_group vace-14b
   if group_ok dwpose && group_ok vace-14b; then
     run_smoke vace-14b wan-14b-vace --frames 17 --density 256
+
+    # (3b) 14B fast (LightX2V step/CFG distill LoRA, 4 steps). Needs the full
+    #      14B base above, so it rides inside the same guard.
+    download_group fast
+    if group_ok fast; then
+      run_smoke vace-14b-fast wan-14b-vace --frames 17 --density 256 --fast
+    else
+      record_failure "skip smoke-vace-14b-fast (missing models)"
+    fi
   else
     record_failure "skip smoke-vace-14b (missing models)"
   fi

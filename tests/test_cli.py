@@ -47,8 +47,6 @@ def _make_video(path: Path, frames: int = 5, size: tuple[int, int] = (64, 64)) -
     return path
 
 
-# ── --help ────────────────────────────────────────────────────────────────────
-
 def test_help_lists_all_commands():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
@@ -92,8 +90,6 @@ def test_vace_spec_counts_snapshot():
     assert spec["expected_bytes"] == 19_000_000_000
     assert spec["min_cached_bytes"] == 3_000_000_000
 
-
-# ── Phase 2: 14B VACE spec shape ────────────────────────────────────────────────
 
 def test_wan_14b_vace_spec_shape():
     spec = _MODEL_SPECS["wan-14b-vace"]
@@ -156,8 +152,6 @@ def test_full_snapshot_passes_none_allow_patterns(tmp_path):
     assert kwargs["allow_patterns"] is None
 
 
-# ── Phase 2: model groups ───────────────────────────────────────────────────────
-
 def test_vace_14b_group_exact_members():
     assert _MODEL_GROUPS["vace-14b"] == ["wan-14b-vace"]
 
@@ -198,8 +192,6 @@ def test_download_preflight_rejects_free_space_within_margin(tmp_path):
     mock_download.assert_not_called()
 
 
-# ── presets ───────────────────────────────────────────────────────────────────
-
 def test_presets_list_exit_zero():
     result = runner.invoke(app, ["presets", "--list"])
     assert result.exit_code == 0
@@ -219,8 +211,6 @@ def test_presets_list_shows_mock():
     result = runner.invoke(app, ["presets", "--list"])
     assert "mock" in _ascii(result.output)
 
-
-# ── benchmark ─────────────────────────────────────────────────────────────────
 
 def test_benchmark_exit_zero():
     result = runner.invoke(app, ["benchmark"])
@@ -242,8 +232,6 @@ def test_benchmark_gpu_info_no_crash():
     result = runner.invoke(app, ["benchmark", "--gpu-info"])
     assert result.exit_code == 0
 
-
-# ── run ───────────────────────────────────────────────────────────────────────
 
 def test_run_mock_exits_zero(tmp_path):
     img = _make_image(tmp_path / "char.png")
@@ -305,7 +293,6 @@ def test_run_mock_output_file_exists(tmp_path):
         "--output-dir", str(out_dir),
     ])
     assert result.exit_code == 0
-    # Some video file must exist in output dir
     videos = list(out_dir.glob("*.mp4"))
     assert len(videos) > 0, f"No mp4 found in {out_dir}"
 

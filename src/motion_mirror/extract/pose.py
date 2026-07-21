@@ -100,7 +100,6 @@ def extract_pose(
     frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # Warn on extreme frame rates (temporal mapping quality degrades)
     if fps < 12.0 or fps > 60.0:
         warnings.warn(
             f"Reference video FPS is {fps:.1f} — outside the 12–60 fps range. "
@@ -120,7 +119,6 @@ def extract_pose(
     if not frames:
         raise VideoDecodeError(f"No frames could be read from: {video_path}")
 
-    # --- Mock path: return random keypoints of correct shape (no model needed) ---
     if cfg.backend == "mock":
         rng = np.random.default_rng(0)
         kps = rng.random((len(frames), 133, 3)).astype(np.float32)
@@ -135,7 +133,6 @@ def extract_pose(
             fps=fps,
         )
 
-    # --- Real path: DWPose-L via rtmlib ---
     # rtmlib >=0.0.13 exposes Wholebody for 133-keypoint COCO-WholeBody estimation.
     # Older versions used PoseTracker(det=..., pose=...) which was removed.
     try:
@@ -165,7 +162,6 @@ def extract_pose(
     # the provider (CUDAExecutionProvider vs CPUExecutionProvider).
     backend_ep = "onnxruntime"
 
-    # Try Wholebody first (current API), fall back to legacy PoseTracker
     tracker = None
     if _Wholebody is not None:
         try:
@@ -245,8 +241,6 @@ def extract_pose(
                     count=num_people,
                 )
 
-            # ── Subject size check (frame 0 only) ────────────────────────────
-            # Estimate bounding box from confident keypoints (conf > 0.3)
             conf = kps_raw[0, :, 2]
             xy = kps_raw[0, :, :2][conf > 0.3]
             if xy.size > 0:
@@ -270,7 +264,6 @@ def extract_pose(
                         stacklevel=2,
                     )
 
-        # ── Per-frame person selection ────────────────────────────────────
         # Zero detections after frame 0: emit an all-zero frame (conf == 0)
         # so downstream confidence gating degrades gracefully.
         if num_people == 0:

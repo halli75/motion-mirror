@@ -47,13 +47,13 @@ BRANCH = "main"
 REPO_URL = "https://github.com/halli75/motion-mirror.git"
 IMAGE = "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
 
-# Caps sized 2026-07-05 for the Phase 2 matrix (~118 GB downloads + two 14B
+# Caps sized 2026-07-05 for the full validation matrix (~118 GB downloads + two 14B
 # smokes under offload). The cap is PER-RUN (run() baselines our_spend at
 # start) and sits below the account balance (~$3.84) so our guard fires and
 # salvages evidence before RunPod force-kills pods at $0 balance.
 # 6 h on the 4090 on-demand = $2.04; the cap leaves room for one retry pod.
 SPEND_CAP_USD = 3.00
-# Phase 2 lineup: a single large-disk pod runs the 3-smoke VACE matrix —
+# Validation lineup: a single large-disk pod runs the 3-smoke VACE matrix —
 # wan-1.3b-vace (regression guard), wan-14b-vace-gguf (gguf resolver base-cache
 # path), and wan-14b-vace (full 14B). disk_gb sizes the container for the
 # combined caches (~19 + ~24 + ~75 GB, HF-API-measured) plus image and margin.
@@ -211,9 +211,6 @@ def _save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
-# ----------------------------------------------------------------- preflight
-
-
 def _fmt_spend_per_hr(value: float | None) -> str:
     # API returns null when no pods are running
     return f"{0.0 if value is None else value:.3f}"
@@ -271,9 +268,6 @@ def preflight() -> None:
     else:
         print(f"  model specs vs HF API: FAILED <-- fix before launch ({result_line})")
         print(specs.stdout)
-
-
-# ---------------------------------------------------------------- pod launch
 
 
 def _gpu_candidates(role_cfg: dict) -> list[tuple[str, float]]:
@@ -419,9 +413,6 @@ def terminate(pod_id: str) -> None:
         _save_state(state)
 
 
-# ------------------------------------------------------------ evidence fetch
-
-
 def fetch_evidence(pod_id: str, role: str) -> None:
     dest = EVIDENCE_DIR / f"pod-{role}"
     dest.mkdir(parents=True, exist_ok=True)
@@ -462,9 +453,6 @@ def fetch_evidence(pod_id: str, role: str) -> None:
         out.write_bytes(blob)
         got += 1
     print(f"fetched {got} files -> {dest}")
-
-
-# -------------------------------------------------------------------- run
 
 
 def our_spend(state: dict) -> float:

@@ -26,8 +26,6 @@ def _make_video(path: Path, frames: int = 5, size: tuple[int, int] = (128, 128))
     return path
 
 
-# ── mock mode tests (no GPU / no models) ─────────────────────────────────────
-
 def test_pose_returns_pose_sequence(tmp_path):
     vid = _make_video(tmp_path / "motion.mp4", frames=5)
     cfg = MotionMirrorConfig(backend="mock", device="cpu")
@@ -73,8 +71,6 @@ def test_pose_mock_confidence_range(tmp_path):
     assert conf.max() <= 1.0
 
 
-# ── validation tests ──────────────────────────────────────────────────────────
-
 def test_pose_missing_file_raises(tmp_path):
     cfg = MotionMirrorConfig(backend="mock", device="cpu")
     with pytest.raises(FileNotFoundError, match="Video not found"):
@@ -96,8 +92,6 @@ def test_pose_frame_count_matches_video(tmp_path):
     result = extract_pose(vid, cfg)
     assert result.keypoints.shape[0] == 8
 
-
-# ── real-path tracking tests (fake rtmlib tracker, no GPU / no models) ───────
 
 def _real_cfg(tmp_path: Path) -> MotionMirrorConfig:
     """Config on the real (non-mock) path with dummy DWPose model files."""

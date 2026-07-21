@@ -28,9 +28,6 @@ from motion_mirror.extract.trajectory import synthesize_trajectory
 from motion_mirror.types import PoseSequence, SegmentationResult, TrajectoryMap
 
 
-# ── Fixtures ──────────────────────────────────────────────────────────────────
-
-
 def _make_video(path: Path, frames: int = 5, size: tuple[int, int] = (128, 128)) -> Path:
     """Write a synthetic MP4 with random BGR frames."""
     w, h = size
@@ -73,7 +70,6 @@ def _make_segmentation(
     """SegmentationResult with a solid rectangular foreground mask."""
     h, w = size[1], size[0]
     mask = np.zeros((h, w), dtype=np.uint8)
-    # Fill centre 50% rectangle as foreground
     mask[h // 4: 3 * h // 4, w // 4: 3 * w // 4] = 255
     rgba = np.zeros((h, w, 4), dtype=np.uint8)
     rgba[:, :, 3] = mask
@@ -95,9 +91,6 @@ def _make_config(tmp_path: Path) -> MotionMirrorConfig:
         device="cpu",
         trajectory_density=64,  # small for speed
     )
-
-
-# ── synthesize_trajectory: output contract ────────────────────────────────────
 
 
 def test_trajectory_returns_trajectory_map(tmp_path):
@@ -188,9 +181,6 @@ def test_trajectory_frame_size_matches_char_image(tmp_path):
     assert result.frame_size == (64, 64)
 
 
-# ── Layer 1: drift correctness ────────────────────────────────────────────────
-
-
 def test_layer1_rightward_drift():
     """Layer-1 tracks must drift right when keypoints move right."""
     num_frames = 5
@@ -212,7 +202,6 @@ def test_layer1_rightward_drift():
     M = _build_body_transform(kps, char_size, char_size, char_mask)
     tracks = _layer1_skeleton_tracks(kps, M, char_size)
 
-    # x coordinate of the mean track should increase each frame
     mean_x = tracks[:, :, 0].mean(axis=1)  # (F,)
     assert np.all(np.diff(mean_x) > 0), f"Expected monotonic rightward drift: {mean_x}"
 
@@ -260,9 +249,6 @@ def test_layer1_no_confident_keypoints_returns_centre():
     assert np.allclose(tracks, 0.5, atol=0.01)
 
 
-# ── Layer 2: Gaussian interpolation ──────────────────────────────────────────
-
-
 def test_layer2_shape():
     num_frames = 5
     density = 64
@@ -308,9 +294,6 @@ def test_layer2_gaussian_isotropic_on_nonsquare_frame():
     )
 
 
-# ── Layer 3: fallback seed grid ──────────────────────────────────────────────
-
-
 def test_layer3_fallback_seeds_not_collinear():
     """Empty non-rigid mask → fallback seeds must form a 2D grid, not a diagonal."""
     fh, fw = 48, 64
@@ -328,9 +311,6 @@ def test_layer3_fallback_seeds_not_collinear():
     )
 
 
-# ── Body transform ────────────────────────────────────────────────────────────
-
-
 def test_body_transform_maps_to_char_space():
     num_frames = 3
     char_size = (128, 128)
@@ -342,15 +322,11 @@ def test_body_transform_maps_to_char_space():
     char_mask = np.full((char_size[1], char_size[0]), 255, dtype=np.uint8)
     M = _build_body_transform(kps, ref_size, char_size, char_mask)
     assert M.shape == (3, 3)
-    # Transform a point and check it stays in reasonable range
     pt = np.array([[40.0, 50.0]], dtype=np.float32)
     out = _apply_transform_to_points(pt, M, char_size)
     assert out.shape == (1, 2)
     assert out[0, 0] >= 0.0 and out[0, 0] <= 1.0
     assert out[0, 1] >= 0.0 and out[0, 1] <= 1.0
-
-
-# ── Nonrigid mask ─────────────────────────────────────────────────────────────
 
 
 def test_nonrigid_mask_shape():
@@ -366,11 +342,7 @@ def test_nonrigid_mask_excludes_body_core():
     mask = np.zeros((128, 128), dtype=np.uint8)
     mask[32:96, 32:96] = 255
     nr = _build_nonrigid_mask(mask)
-    # Centre pixel of body should be 0 (excluded)
     assert nr[64, 64] == 0
-
-
-# ── Edge cases ────────────────────────────────────────────────────────────────
 
 
 def test_trajectory_single_frame_raises(tmp_path):

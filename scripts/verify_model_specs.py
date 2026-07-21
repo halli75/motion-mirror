@@ -27,7 +27,6 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-# --- src/ layout bootstrap -------------------------------------------------
 # Insert the repo's src/ at the FRONT of sys.path so we import the in-tree
 # motion_mirror.cli (with the current specs) rather than any stale copy that
 # may be pip-installed into site-packages.
@@ -51,7 +50,6 @@ _SIZE_TOLERANCE = 0.15
 _KNOWN_EXCLUDABLE = ["transformer/*", ".gitattributes", "README.md", "assets/*"]
 
 
-# --- HTTP helpers ----------------------------------------------------------
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Redirect handler that does not follow - lets us inspect the 3xx itself."""
 
@@ -83,7 +81,6 @@ def _get_json(url: str, timeout: float) -> tuple[Any, dict[str, str]]:
     return payload, headers
 
 
-# --- individual checks -----------------------------------------------------
 def check_repo_exists(repo_id: str, timeout: float) -> tuple[bool, str]:
     """GET /api/models/<repo_id> and expect HTTP 200."""
     url = f"{_HF}/api/models/{repo_id}"
@@ -266,7 +263,6 @@ def verify_spec(key: str, spec: dict, timeout: float) -> tuple[bool, str]:
     return ok, detail
 
 
-# --- CLI -------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(

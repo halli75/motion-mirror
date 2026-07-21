@@ -23,8 +23,6 @@ from ..types import SegmentationResult
 
 _SUPPORTED_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
-# ── rembg singleton ───────────────────────────────────────────────────────────
-
 # Module-level lazy session — expensive to construct, reused across calls.
 _rembg_session: object | None = None
 
@@ -36,8 +34,6 @@ def _get_rembg_session() -> object:
         _rembg_session = new_session("u2net")
     return _rembg_session
 
-
-# ── SAM-2 singleton ───────────────────────────────────────────────────────────
 
 # Cached per-device so we don't reload if the same device is requested again.
 _sam2_predictors: dict[str, object] = {}
@@ -64,9 +60,6 @@ def _get_sam2_predictor(device: str = "cuda") -> object:
     )
     _sam2_predictors[device] = predictor
     return predictor
-
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 
 def segment_subject(
@@ -109,9 +102,6 @@ def segment_subject(
     return _segment_rembg(image_path, cfg)
 
 
-# ── rembg backend ─────────────────────────────────────────────────────────────
-
-
 def _segment_rembg(
     image_path: Path,
     cfg: MotionMirrorConfig,
@@ -139,9 +129,6 @@ def _segment_rembg(
         mask=mask_np,
         rgba=rgba_np,
     )
-
-
-# ── SAM-2 backend ─────────────────────────────────────────────────────────────
 
 
 def _segment_sam2(
@@ -192,12 +179,10 @@ def _segment_sam2(
             multimask_output=True,      # returns 3 candidates
         )
 
-    # Pick the mask with the highest SAM-2 confidence score
     best_idx = int(scores.argmax())
     mask_bool = masks[best_idx]                        # (H, W) bool
     mask_np = (mask_bool.astype(np.uint8) * 255)      # (H, W) uint8
 
-    # Warn if the chosen mask is very small or very large
     frac = mask_bool.sum() / (h * w)
     if frac < 0.05:
         warnings.warn(
@@ -214,7 +199,6 @@ def _segment_sam2(
             stacklevel=3,
         )
 
-    # Build RGBA with mask as alpha channel
     rgba_np = np.zeros((h, w, 4), dtype=np.uint8)
     rgba_np[:, :, :3] = img_np
     rgba_np[:, :, 3] = mask_np

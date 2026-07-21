@@ -42,9 +42,6 @@ def _write_rgb_video(path: Path, frames: int = 4, size: tuple[int, int] = (64, 6
     writer.release()
 
 
-# ── mock backend ────────────────────────────────────────────────────────────
-
-
 def test_vace_mock_returns_generation_result(tmp_path):
     req = _mock_request(tmp_path)
     cfg = _mock_cfg(tmp_path)
@@ -132,9 +129,6 @@ def test_vace_mock_invalid_resolution_raises(tmp_path):
     cfg = _mock_cfg(tmp_path)
     with pytest.raises(ValueError, match="Invalid resolution"):
         generate_with_vace(req, cfg)
-
-
-# ── real (VACE) path ─────────────────────────────────────────────────────────
 
 
 def test_vace_real_path_requires_conditioning_inputs(tmp_path):
@@ -242,9 +236,6 @@ def test_vace_accepts_4k_plus_1_frames_and_proceeds(tmp_path):
     # Gets past the 4k+1 frame check, then trips on the missing weights.
     with pytest.raises(FileNotFoundError, match="wan-1.3b-vace"):
         generate_with_vace(req, cfg)
-
-
-# ── fake diffusers pipeline harness ──────────────────────────────────────────
 
 
 class FakeGenerator:
@@ -549,9 +540,6 @@ class patch_sys_modules:
         return False
 
 
-# ── Phase 2: 14B + 14B-GGUF backends ─────────────────────────────────────────
-
-
 def _bare_vace_request(tmp_path: Path, backend: str, frames: int = 5) -> tuple[GenerationRequest, MotionMirrorConfig]:
     """A real-path request with conditioning inputs but NO seeded weights."""
     seg = tmp_path / "seg.png"
@@ -642,9 +630,6 @@ def test_vace_gguf_missing_transformer_file_raises(tmp_path):
         generate_with_vace(req, cfg)
 
 
-# ── _resolve_gguf_base_source 3-way (absent ≠ incomplete) ─────────────────────
-
-
 def _gguf_cfg(tmp_path: Path) -> MotionMirrorConfig:
     return MotionMirrorConfig(
         project_root=tmp_path,
@@ -694,9 +679,6 @@ def test_resolve_gguf_base_source_base_partial_raises(tmp_path):
         vace._resolve_gguf_base_source(cfg, spec)
 
 
-# ── memory-policy matrix ──────────────────────────────────────────────────────
-
-
 def test_memory_policy_14b_full_offload_uses_sequential(tmp_path):
     req, cfg = _vace_pipeline_request(
         tmp_path, backend="wan-14b-vace", device="cuda", offload_model=True, t5_cpu=True
@@ -736,9 +718,6 @@ def test_memory_policy_gguf_no_offload_honors_to_device_and_t5(tmp_path):
     assert pipe.text_encoder.device == "cpu"
 
 
-# ── fp32 VAE across all real backends ─────────────────────────────────────────
-
-
 @pytest.mark.parametrize("backend", ["wan-1.3b-vace", "wan-14b-vace", "wan-14b-vace-gguf"])
 def test_vace_uses_fp32_vae(tmp_path, backend):
     req, cfg = _vace_pipeline_request(tmp_path, backend=backend)
@@ -750,17 +729,11 @@ def test_vace_uses_fp32_vae(tmp_path, backend):
     assert FakeAutoencoderKLWan.last_kwargs["torch_dtype"] == "float32"
 
 
-# ── 4k+1 frame rejection on the new backends ──────────────────────────────────
-
-
 @pytest.mark.parametrize("backend", ["wan-14b-vace", "wan-14b-vace-gguf"])
 def test_vace_new_backends_reject_non_4k_plus_1_frames(tmp_path, backend):
     req, cfg = _bare_vace_request(tmp_path, backend, frames=80)
     with pytest.raises(ValueError, match="4k\\+1"):
         generate_with_vace(req, cfg)
-
-
-# ── GGUF finally-cleanup releases VRAM even on failure ────────────────────────
 
 
 def test_vace_gguf_empties_cuda_cache_when_generation_raises(tmp_path):

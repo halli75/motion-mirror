@@ -58,7 +58,6 @@ def passthrough_audio(
     if not generated_video_path.exists():
         raise FileNotFoundError(f"Generated video not found: {generated_video_path}")
 
-    # Probe source for audio streams
     try:
         probe = ffmpeg.probe(str(source_video_path))
     except ffmpeg.Error as exc:

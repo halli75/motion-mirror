@@ -37,8 +37,6 @@ import numpy as np
 from ..config import MotionMirrorConfig
 from ..types import PoseSequence, SegmentationResult, TrajectoryMap
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-
 # COCO-WholeBody body keypoint indices (0-16 = 17 COCO body joints)
 _BODY_KP_INDICES = list(range(17))
 
@@ -63,9 +61,6 @@ _raft_cache: dict[str, object] = {}
 # Dilation kernel sizes
 _MASK_DILATE_BG_PX = 20   # isolate background for homography
 _MASK_DILATE_NR_PX = 30   # non-rigid region border around subject
-
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 
 def synthesize_trajectory(
@@ -99,7 +94,6 @@ def synthesize_trajectory(
 
     char_size = (segmentation.mask.shape[1], segmentation.mask.shape[0])  # (W, H)
 
-    # --- Load video frames --------------------------------------------------
     frames = _load_frames(motion_video_path)
     num_frames = len(frames)
 
@@ -109,13 +103,11 @@ def synthesize_trajectory(
             f"got {num_frames} from {motion_video_path}"
         )
 
-    # Ensure pose sequence matches frame count (truncate to shorter)
-    kps = pose_seq.keypoints  # (F, 133, 3)
+    kps = pose_seq.keypoints
     num_frames = min(num_frames, kps.shape[0])
     frames = frames[:num_frames]
     kps = kps[:num_frames]
 
-    # --- Temporal resampling to cfg.num_frames --------------------------------
     # Map however many source frames we have onto the target output length.
     target_frames = cfg.num_frames
     if target_frames > 0 and num_frames != target_frames:
@@ -124,17 +116,14 @@ def synthesize_trajectory(
         kps = kps[indices]
         num_frames = target_frames
 
-    # --- Build video-space body mask from frame-0 pose keypoints -------------
     # Camera stabilization and Layer-3 seed selection must operate in the
     # reference video's coordinate space, not the character image space.
     # We derive the mask from pose keypoints so it is always correctly sized.
     fh, fw = frames[0].shape[:2]
     video_body_mask = _build_video_body_mask(kps[0], (fh, fw))
 
-    # --- Camera motion compensation ----------------------------------------
     stabilized_frames, homographies = _compensate_camera_motion(frames, video_body_mask)
 
-    # Warn if very few frames were successfully stabilized
     valid_h_count = sum(1 for h in homographies[1:] if h is not None)
     total_pairs = num_frames - 1
     if total_pairs > 1 and valid_h_count < total_pairs // 2:
@@ -146,21 +135,17 @@ def synthesize_trajectory(
             stacklevel=2,
         )
 
-    # --- Coordinate transform: reference video → character image space ------
     body_transform = _build_body_transform(
         kps, pose_seq.frame_size, char_size, segmentation.mask
     )
 
-    # --- Layer 1: skeleton keypoint tracks ----------------------------------
     layer1 = _layer1_skeleton_tracks(kps, body_transform, char_size)
     n1 = layer1.shape[1]  # skeleton anchor count — always preserved in final mix
     # layer1: (F, N1, 2) normalised [0,1]
 
-    # --- Layer 2: Gaussian-falloff interpolated tracks ----------------------
     layer2 = _layer2_interpolated_tracks(layer1, segmentation.mask, density)
     # layer2: (F, N2, 2)
 
-    # --- Layer 3: optical-flow tracks for non-rigid regions -----------------
     layer3, flow_fields = _layer3_flow_tracks(
         stabilized_frames,
         video_body_mask,
@@ -172,7 +157,6 @@ def synthesize_trajectory(
     )
     # layer3: (F, N3, 2), flow_fields: (F-1, H, W, 2)
 
-    # --- Compose layers; always preserve Layer-1 skeleton anchors -----------
     # Layer-1 tracks are the spec's "scaffold" — they must survive subsampling.
     other_tracks = np.concatenate([layer2, layer3], axis=1)  # (F, N2+N3, 2)
     total_others = other_tracks.shape[1]
@@ -205,9 +189,6 @@ def synthesize_trajectory(
         density=density,
         frame_size=char_size,
     )
-
-
-# ── Private helpers ───────────────────────────────────────────────────────────
 
 
 def _load_frames(video_path: Path) -> list[np.ndarray]:
@@ -406,7 +387,6 @@ def _layer1_skeleton_tracks(
     """
     num_frames = keypoints.shape[0]
 
-    # Select keypoints with mean confidence > 0.3 across frames
     mean_conf = keypoints[:, :, 2].mean(axis=0)  # (133,)
     confident = np.where(mean_conf > 0.3)[0]
 
@@ -515,9 +495,6 @@ def _layer2_interpolated_tracks(
         tracks[f] = np.clip(seeds + displacement, 0.0, 1.0)
 
     return tracks.astype(np.float32)
-
-
-# ── Optical flow helpers ──────────────────────────────────────────────────────
 
 
 def _compute_flow_farneback(

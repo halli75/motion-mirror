@@ -3,7 +3,7 @@
 #   cd /workspace && git clone -b main <repo> repo \
 #     && bash repo/runpod-validation/pod_bootstrap.sh
 #
-# VACE lineup (Phase 2): a 3-smoke matrix on a large-disk GPU pod. Order is
+# VACE lineup: a 3-smoke matrix on a large-disk GPU pod. Order is
 # load-bearing — downloads are interleaved with smokes:
 #   (1) dwpose + vace  -> smoke wan-1.3b-vace       (pose-conditioned regression
 #       guard on the already-validated backend);

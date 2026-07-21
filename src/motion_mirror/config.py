@@ -45,11 +45,11 @@ class MotionMirrorConfig:
     num_inference_steps: int = 30  # denoising steps; higher = sharper, slower
     device: str = "cuda"         # "cuda" | "cpu"
 
-    # VRAM optimization flags (v0.2a)
+    # VRAM optimization flags
     offload_model: bool = False  # sequential layer-by-layer CPU offload
     t5_cpu: bool = False         # keep T5 text encoder on CPU when supported
 
-    # Optional stage upgrades (v0.2a)
+    # Optional stage upgrades
     flow_estimator: Literal["farneback", "raft"] = "farneback"
     segmenter: Literal["rembg", "sam2"] = "rembg"
 
@@ -85,8 +85,6 @@ class MotionMirrorConfig:
                 f"{self.num_inference_steps}"
             )
 
-        # Validate Literal-typed / enumerated string fields against their
-        # allowed sets so bad values fail here instead of deep in a stage.
         for field_name, allowed in (
             ("backend", get_args(BackendName)),
             ("device", get_args(DeviceName)),

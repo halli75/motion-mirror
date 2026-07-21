@@ -13,14 +13,10 @@ from unittest.mock import MagicMock, patch
 from PIL import Image
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
 def _make_image(path: Path, size: tuple[int, int] = (128, 128), color=(180, 120, 80)) -> Path:
     Image.new("RGB", size, color).save(str(path))
     return path
 
-
-# ── rembg path: backward-compat checks ───────────────────────────────────────
 
 def test_segment_default_uses_rembg(tmp_path):
     """Default segmenter is rembg — existing tests must still pass."""
@@ -48,8 +44,6 @@ def test_segment_rembg_explicit(tmp_path):
     result = segment_subject(img, cfg)
     assert result.rgba_path.exists()
 
-
-# ── SAM-2 dispatch: non-GPU (mocked) ─────────────────────────────────────────
 
 def _make_sam2_mock(h: int = 64, w: int = 64):
     """Build a minimal mock that looks like SAM2ImagePredictor."""
@@ -188,8 +182,6 @@ def test_segment_sam2_missing_package_raises_importerror(tmp_path):
             segment_subject(img, cfg)
 
 
-# ── Existing segment tests still pass ────────────────────────────────────────
-
 def test_unsupported_extension_still_raises(tmp_path):
     from motion_mirror.config import MotionMirrorConfig
     from motion_mirror.extract.segment import segment_subject
@@ -200,8 +192,6 @@ def test_unsupported_extension_still_raises(tmp_path):
     with pytest.raises(UnsupportedImageError):
         segment_subject(bad, MotionMirrorConfig(project_root=tmp_path))
 
-
-# ── GPU tests ─────────────────────────────────────────────────────────────────
 
 @pytest.mark.gpu
 def test_segment_sam2_real_produces_valid_mask(tmp_path):

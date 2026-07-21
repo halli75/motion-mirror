@@ -74,7 +74,6 @@ def create_app(config: "MotionMirrorConfig | None" = None):
         )
 
         with gr.Row():
-            # ── Left column: inputs ──────────────────────────────────────────
             with gr.Column(scale=1):
                 char_image = gr.Image(
                     type="filepath",
@@ -86,7 +85,6 @@ def create_app(config: "MotionMirrorConfig | None" = None):
                     sources=["upload"],
                 )
 
-            # ── Right column: output ─────────────────────────────────────────
             with gr.Column(scale=1):
                 output_video = gr.Video(
                     label="Generated Animation",
@@ -98,7 +96,6 @@ def create_app(config: "MotionMirrorConfig | None" = None):
                     lines=2,
                 )
 
-        # ── Advanced settings ────────────────────────────────────────────────
         with gr.Accordion("Advanced Settings", open=False):
             with gr.Row():
                 backend_dd = gr.Dropdown(

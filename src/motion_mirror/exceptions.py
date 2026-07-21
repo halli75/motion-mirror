@@ -23,13 +23,9 @@ MotionMirrorError
 from __future__ import annotations
 
 
-# ── Base ──────────────────────────────────────────────────────────────────────
-
 class MotionMirrorError(Exception):
     """Base class for all Motion Mirror exceptions."""
 
-
-# ── Input validation ──────────────────────────────────────────────────────────
 
 class InputError(MotionMirrorError):
     """Raised when an input file fails validation before processing begins."""
@@ -57,8 +53,6 @@ class VideoDecodeError(InputError):
         super().__init__(message)
         self.ffmpeg_output = ffmpeg_output
 
-
-# ── Pose detection ────────────────────────────────────────────────────────────
 
 class PoseError(MotionMirrorError):
     """Raised when DWPose cannot produce a usable pose for generation."""
@@ -94,8 +88,6 @@ class MultiplePeopleDetectedError(PoseError):
         super().__init__(message)
         self.count = count
 
-
-# ── Subject size / character validation ───────────────────────────────────────
 
 class SubjectError(MotionMirrorError):
     """Raised for subject-size or character-count problems."""
@@ -139,8 +131,6 @@ class MultipleCharactersError(SubjectError):
         super().__init__(message)
         self.count = count
 
-
-# ── Hardware ──────────────────────────────────────────────────────────────────
 
 class HardwareError(MotionMirrorError):
     """Raised for hardware capability problems (GPU VRAM, driver, etc.)."""

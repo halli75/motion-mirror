@@ -47,16 +47,21 @@ BRANCH = "main"
 REPO_URL = "https://github.com/halli75/motion-mirror.git"
 IMAGE = "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
 
-# Caps sized 2026-07-05 for the full validation matrix (~118 GB downloads + two 14B
-# smokes under offload). The cap is PER-RUN (run() baselines our_spend at
-# start) and sits below the account balance (~$3.84) so our guard fires and
-# salvages evidence before RunPod force-kills pods at $0 balance.
-# 6 h on the 4090 on-demand = $2.04; the cap leaves room for one retry pod.
+# Caps for the full validation matrix (~131 GB downloads + the 14B smokes under
+# offload). The cap is PER-RUN (run() baselines our_spend at start) and sits
+# below the account balance so our guard fires and salvages evidence before
+# RunPod force-kills pods at $0 balance. Value-first ordering (cheap 1.3B
+# baseline+fast pair runs first, the 75 GB full-14B tail last) means if the cap
+# bites, only the least-essential 14B-fast bonus is lost, not the headline
+# speedup number. On the selected cards ($0.22-0.44/hr) the 7-smoke matrix
+# completes inside $3; wall_cap, not spend, is what had to grow for the larger
+# lineup.
 SPEND_CAP_USD = 3.00
-# Validation lineup: a single large-disk pod runs the 3-smoke VACE matrix —
-# wan-1.3b-vace (regression guard), wan-14b-vace-gguf (gguf resolver base-cache
-# path), and wan-14b-vace (full 14B). disk_gb sizes the container for the
-# combined caches (~19 + ~24 + ~75 GB, HF-API-measured) plus image and margin.
+# Validation lineup: one large-disk pod runs a 7-smoke matrix - baseline and
+# fast-distilled pairs for wan-1.3b-vace, wan-14b-vace-gguf (fast swaps in the
+# FusionX pre-merged GGUF), and wan-14b-vace. disk_gb sizes the container for
+# the combined caches (~19 + ~24 + ~75 GB base + ~13 GB fast artifacts,
+# HF-API-measured) plus image and margin.
 ROLES = {
     "vace": {
         # Prefer stable Ampere/Ada datacenter cards first: RunPod's community
@@ -78,9 +83,11 @@ ROLES = {
         # in system RAM (bf16 transformer ~28 GB + UMT5 ~11 GB + VAE +
         # overhead ≈ 42-48 GB peak) — 48 GB was an OOM-kill risk.
         "min_ram_gb": 64,
-        # 6 h wall: measured 1.3B smoke 7-26 min + est. 30-60 min downloads
-        # + two untested 14B smokes under offload (est. 25-60 min each).
-        "wall_cap_h": 6.0,
+        # 8 h wall: the 7-smoke matrix (3 baseline + 3 fast + 1 experiment path)
+        # over ~131 GB of downloads. Sized so the spend cap, not the clock, is
+        # the binding limit on the selected cards - a cut-off run still salvages
+        # evidence and always terminates the pod.
+        "wall_cap_h": 8.0,
     },
 }
 

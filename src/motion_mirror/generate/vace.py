@@ -189,11 +189,11 @@ def _generate_vace(
         config, spec["name"]
     )
     fast_spec = _fast_spec_for(config, spec["name"])
-    if fast_spec is not None:
-        artifact = MODEL_SPECS[fast_spec["artifact"]]
+    fast_artifact = MODEL_SPECS[fast_spec["artifact"]] if fast_spec else None
+    if fast_artifact is not None:
         for key in ("license_warning", "experimental_warning"):
-            if artifact.get(key):
-                warnings.warn(artifact[key], stacklevel=2)
+            if fast_artifact.get(key):
+                warnings.warn(fast_artifact[key], stacklevel=2)
 
     if is_gguf and config.lora is not None:
         raise ValueError(
@@ -203,14 +203,13 @@ def _generate_vace(
 
     if is_gguf:
         gguf_spec = spec
-        if fast_spec is not None:
+        if fast_artifact is not None:
             # Fast mode swaps only the quantized transformer file for the
             # pre-merged distilled one; base resolution stays on `spec`.
-            artifact = MODEL_SPECS[fast_spec["artifact"]]
             gguf_spec = {
                 **spec,
-                "cache_subdir": artifact["cache_subdir"],
-                "gguf_filename": artifact["filename"],
+                "cache_subdir": fast_artifact["cache_subdir"],
+                "gguf_filename": fast_artifact["filename"],
                 "download_group": fast_spec["artifact"],
             }
         transformer_path = _resolve_gguf_transformer_path(config, gguf_spec)

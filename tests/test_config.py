@@ -25,6 +25,15 @@ def test_num_inference_steps_validation():
         MotionMirrorConfig(num_inference_steps=201)
 
 
+def test_guidance_scale_validation():
+    assert MotionMirrorConfig().guidance_scale is None
+    assert MotionMirrorConfig(guidance_scale=1.0).guidance_scale == 1.0
+    with pytest.raises(ValueError, match="guidance_scale"):
+        MotionMirrorConfig(guidance_scale=0)
+    with pytest.raises(ValueError, match="guidance_scale"):
+        MotionMirrorConfig(guidance_scale=-2.5)
+
+
 def test_output_dir():
     c = MotionMirrorConfig(project_root=Path("/tmp/proj"))
     assert c.output_dir == Path("/tmp/proj/outputs")

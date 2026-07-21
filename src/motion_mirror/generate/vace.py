@@ -245,7 +245,7 @@ def _generate_vace(
             width=width,
             num_frames=request.frames,
             num_inference_steps=config.num_inference_steps,
-            guidance_scale=5.0,
+            guidance_scale=config.guidance_scale if config.guidance_scale is not None else 5.0,
             generator=generator,
         ).frames[0]
 

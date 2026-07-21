@@ -450,6 +450,26 @@ def test_vace_pipe_receives_configured_inference_steps(tmp_path):
     assert call["num_inference_steps"] == 42
 
 
+def test_vace_pipe_guidance_scale_defaults_to_five(tmp_path):
+    req, cfg = _vace_pipeline_request(tmp_path)
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        generate_with_vace(req, cfg)
+
+    call = FakePipe.last_instance.calls[0]
+    assert call["guidance_scale"] == 5.0
+
+
+def test_vace_pipe_receives_configured_guidance_scale(tmp_path):
+    req, cfg = _vace_pipeline_request(tmp_path, guidance_scale=1.0)
+
+    with patch_sys_modules(_fake_diffusers_modules(cuda_available=False)):
+        generate_with_vace(req, cfg)
+
+    call = FakePipe.last_instance.calls[0]
+    assert call["guidance_scale"] == 1.0
+
+
 def test_vace_offload_model_enables_sequential_cpu_offload(tmp_path):
     """offload_model=True on CUDA must route through sequential CPU offload."""
     req, cfg = _vace_pipeline_request(

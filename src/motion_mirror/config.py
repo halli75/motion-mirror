@@ -43,6 +43,9 @@ class MotionMirrorConfig:
     resolution: str = "832x480"  # WxH string
     num_frames: int = 81         # 81 frames = ~5 s at 16 fps
     num_inference_steps: int = 30  # denoising steps; higher = sharper, slower
+    # Classifier-free guidance scale. None = backend default (5.0). Distilled
+    # few-step generation wants 1.0 (CFG off).
+    guidance_scale: float | None = None
     device: str = "cuda"         # "cuda" | "cpu"
 
     # VRAM optimization flags
@@ -83,6 +86,10 @@ class MotionMirrorConfig:
             raise ValueError(
                 f"num_inference_steps must be in [1, 200], got "
                 f"{self.num_inference_steps}"
+            )
+        if self.guidance_scale is not None and self.guidance_scale <= 0:
+            raise ValueError(
+                f"guidance_scale must be > 0, got {self.guidance_scale}"
             )
 
         for field_name, allowed in (

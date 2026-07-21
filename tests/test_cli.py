@@ -259,6 +259,29 @@ def test_run_accepts_steps_option(tmp_path):
     assert result.exit_code == 0, result.output
 
 
+def test_run_accepts_guidance_scale_option(tmp_path):
+    img = _make_image(tmp_path / "char.png")
+    vid = _make_video(tmp_path / "motion.mp4", frames=5)
+    result = runner.invoke(app, [
+        "run", str(img), str(vid),
+        "--backend", "mock", "--resolution", "64x32",
+        "--frames", "3", "--guidance-scale", "2.0", "--density", "16", "--device", "cpu",
+        "--output-dir", str(tmp_path / "out"),
+    ])
+    assert result.exit_code == 0, result.output
+
+
+def test_run_rejects_nonpositive_guidance_scale(tmp_path):
+    img = _make_image(tmp_path / "char.png")
+    vid = _make_video(tmp_path / "motion.mp4", frames=5)
+    result = runner.invoke(app, [
+        "run", str(img), str(vid),
+        "--backend", "mock", "--resolution", "64x32",
+        "--frames", "3", "--guidance-scale", "0", "--density", "16", "--device", "cpu",
+    ])
+    assert result.exit_code != 0
+
+
 def test_run_rejects_out_of_range_steps(tmp_path):
     img = _make_image(tmp_path / "char.png")
     vid = _make_video(tmp_path / "motion.mp4", frames=5)

@@ -164,6 +164,7 @@ def run(
     resolution: Optional[str] = typer.Option(None, help="Output resolution WxH, e.g. 832x480."),
     frames: Optional[int] = typer.Option(None, help="Number of output frames."),
     steps: Optional[int] = typer.Option(None, help="Denoising steps (1-200; higher = sharper, slower)."),
+    guidance_scale: Optional[float] = typer.Option(None, "--guidance-scale", help="Classifier-free guidance scale (> 0; default 5.0, use 1.0 to disable CFG)."),
     density: Optional[int] = typer.Option(None, help="Trajectory density (512 = default, 1024 = HQ)."),
     device: Optional[str] = typer.Option(None, help="Compute device: cuda | cpu."),
     output_dir: Optional[Path] = typer.Option(None, help="Output directory (default: ./outputs)."),
@@ -184,6 +185,8 @@ def run(
         cfg_kwargs["num_inference_steps"] = preset_data.get("num_inference_steps", 30)
         cfg_kwargs["trajectory_density"] = preset_data.get("trajectory_density", 512)
         cfg_kwargs["device"] = preset_data.get("device", "cuda")
+        if "guidance_scale" in preset_data:
+            cfg_kwargs["guidance_scale"] = preset_data["guidance_scale"]
         if "offload_model" in preset_data:
             cfg_kwargs["offload_model"] = preset_data["offload_model"]
         if "t5_cpu" in preset_data:
@@ -203,6 +206,8 @@ def run(
         cfg_kwargs["num_frames"] = frames
     if steps is not None:
         cfg_kwargs["num_inference_steps"] = steps
+    if guidance_scale is not None:
+        cfg_kwargs["guidance_scale"] = guidance_scale
     if density is not None:
         cfg_kwargs["trajectory_density"] = density
     if device is not None:

@@ -7,7 +7,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
-from PIL import Image
 
 import motion_mirror
 from motion_mirror.exceptions import (

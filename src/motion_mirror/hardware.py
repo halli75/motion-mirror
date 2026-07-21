@@ -1,9 +1,10 @@
-"""GPU detection and backend recommendation for Motion Mirror v0.2a."""
+"""GPU detection and backend recommendation."""
 from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
 
+from .config import MotionMirrorConfig
 from .exceptions import InsufficientVRAMError
 
 # Safety margin over measured peak VRAM.
@@ -68,10 +69,8 @@ def recommend_backend(vram_gb: float) -> tuple[str, dict]:
     )
 
 
-def auto_config(base: "MotionMirrorConfig") -> "MotionMirrorConfig":  # noqa: F821
+def auto_config(base: MotionMirrorConfig) -> MotionMirrorConfig:
     """Resolve backend='auto' to a concrete backend based on available VRAM."""
-    from .config import MotionMirrorConfig
-
     if base.backend != "auto":
         return base
 

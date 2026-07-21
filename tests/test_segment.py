@@ -1,4 +1,3 @@
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -90,7 +89,6 @@ def test_segment_jpeg_accepted(tmp_path):
 
 def test_segment_output_dir_created(tmp_path):
     img = _make_png(tmp_path / "char.png")
-    out = tmp_path / "deep" / "outputs"
     cfg = MotionMirrorConfig(project_root=tmp_path / "deep", backend="mock")
     result = segment_subject(img, cfg)
     assert result.rgba_path.parent.exists()

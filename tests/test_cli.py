@@ -12,7 +12,6 @@ from unittest.mock import patch
 
 import cv2
 import numpy as np
-import pytest
 from typer.testing import CliRunner
 
 from motion_mirror.cli import _MODEL_GROUPS, _MODEL_SPECS, _is_spec_cached, app

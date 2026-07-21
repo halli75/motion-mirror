@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import cv2
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -137,7 +137,6 @@ def test_synthesize_trajectory_raft_config_threads_through(tmp_path):
 
     called_with_raft = []
 
-    original_compute = None
     from motion_mirror.extract import trajectory as traj_module
 
     def fake_compute_flow_pair(f0, fk, estimator="farneback", device="cpu"):

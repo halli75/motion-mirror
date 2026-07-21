@@ -35,6 +35,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8,<9",
+  "ruff>=0.15",
 ]
 cuda = [
   "torch>=2.2",
@@ -86,3 +87,7 @@ markers = [
   "network: marks tests that hit the live Hugging Face API (run with -m network)",
   "slow: marks tests that take more than 30 seconds",
 ]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100

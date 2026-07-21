@@ -102,7 +102,6 @@ def test_pipeline_trajectory_path_set_and_exists(tmp_path):
 
 
 def test_pipeline_trajectory_npz_is_valid(tmp_path):
-    import numpy as np
     from motion_mirror.types import TrajectoryMap
 
     img = _make_image(tmp_path / "char.png")
@@ -129,7 +128,7 @@ def test_pipeline_runs_twice_without_error(tmp_path):
     img = _make_image(tmp_path / "char.png")
     vid = _make_video(tmp_path / "motion.mp4", frames=5)
     p = _mock_pipeline(tmp_path)
-    r1 = p.run(img, vid)
+    p.run(img, vid)
     r2 = p.run(img, vid)
     assert r2.output_path.exists()
 

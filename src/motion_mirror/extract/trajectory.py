@@ -516,7 +516,6 @@ def _load_raft(device: str) -> object:
         return _raft_cache[device]
 
     try:
-        import torch  # type: ignore[import]
         from torchvision.models.optical_flow import (  # type: ignore[import]
             Raft_Large_Weights,
             raft_large,

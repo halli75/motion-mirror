@@ -26,6 +26,7 @@ motion-mirror download --model dwpose
 The suite is split by the `gpu` pytest marker:
 
 ```bash
+ruff check .            # lint - must be clean; CI enforces it
 pytest -m "not gpu"     # fast suite - no GPU or weights needed; this is what CI runs
 pytest -m gpu           # needs CUDA + downloaded weights
 ```

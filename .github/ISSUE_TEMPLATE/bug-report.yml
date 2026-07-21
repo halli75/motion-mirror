@@ -1,0 +1,76 @@
+name: Bug report
+description: Report an issue that should be fixed (avoid pasting giant AI-generated summaries or your issue may be closed/ignored)
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the bug you encountered
+      placeholder: What happened?
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      description: The exact command you ran
+      placeholder: e.g., motion-mirror run character.png motion.mp4 --backend wan-1.3b-vace
+    validations:
+      required: false
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Full traceback / error output
+      description: Paste the complete error output
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: backend
+    attributes:
+      label: Backend
+      description: Which backend were you using?
+      placeholder: e.g., wan-1.3b-vace, wan-14b-vace-gguf, mock
+    validations:
+      required: false
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver
+      description: GPU model, VRAM, and NVIDIA driver version
+      placeholder: e.g., RTX 4090 24 GB, driver 570.86, CUDA 12.8
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      description: What OS are you using?
+      placeholder: e.g., Windows 11, Ubuntu 22.04
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Motion Mirror version
+      description: Output of `pip show motion-mirror` or the commit you're on
+    validations:
+      required: false
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce this issue?
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: false

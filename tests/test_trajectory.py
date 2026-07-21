@@ -8,7 +8,6 @@ Synthetic inputs are used throughout:
 """
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import cv2
@@ -160,7 +159,6 @@ def test_trajectory_density_matches_config(tmp_path):
     vid = _make_video(tmp_path / "motion.mp4", frames=5)
     pose = _make_drifting_pose(num_frames=5)
     seg = _make_segmentation(tmp_path)
-    cfg = _make_config(tmp_path)
     cfg_128 = MotionMirrorConfig(
         project_root=tmp_path,
         backend="mock",
@@ -192,12 +190,6 @@ def test_layer1_rightward_drift():
         kps[f, :17, 1] = 60.0
         kps[f, :17, 2] = 0.95
 
-    pose = PoseSequence(
-        source_video_path=Path("v.mp4"),
-        keypoints=kps,
-        frame_size=char_size,
-        fps=24.0,
-    )
     char_mask = np.full((char_size[1], char_size[0]), 255, dtype=np.uint8)
     M = _build_body_transform(kps, char_size, char_size, char_mask)
     tracks = _layer1_skeleton_tracks(kps, M, char_size)

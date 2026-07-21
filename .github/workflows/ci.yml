@@ -32,6 +32,9 @@ jobs:
       - name: Install package + dev deps
         run: pip install -e ".[dev]" --quiet
 
+      - name: Ruff lint
+        run: ruff check .
+
       - name: Check imports
         run: |
           python -c "import motion_mirror; print('motion_mirror OK')"

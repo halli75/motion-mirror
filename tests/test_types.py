@@ -2,7 +2,6 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from motion_mirror.types import (
     GenerationResult,

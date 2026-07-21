@@ -43,7 +43,7 @@ HEADERS = {
     "Accept": "application/json",
 }
 
-BRANCH = "runpod-v02a-validation"
+BRANCH = "main"
 REPO_URL = "https://github.com/halli75/motion-mirror.git"
 IMAGE = "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
 
@@ -352,7 +352,7 @@ def launch(role: str, experiment: dict | None = None) -> str:
             gpuCount: 1
             gpuTypeId: {json.dumps(gpu)}
             imageName: {json.dumps(IMAGE)}
-            name: {json.dumps(f"mm-v02a-validate-{role}")}
+            name: {json.dumps(f"mm-gpu-validate-{role}")}
             containerDiskInGb: {cfg["disk_gb"]}
             volumeInGb: 0
             minMemoryInGb: {cfg["min_ram_gb"]}

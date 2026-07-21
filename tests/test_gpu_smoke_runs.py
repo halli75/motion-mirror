@@ -26,8 +26,8 @@ def _repo_root() -> Path:
 
 
 def _load_gpu_smoke_script():
-    module_path = _repo_root() / "scripts" / "v02a_gpu_smoke.py"
-    spec = importlib.util.spec_from_file_location("v02a_gpu_smoke", module_path)
+    module_path = _repo_root() / "scripts" / "gpu_smoke.py"
+    spec = importlib.util.spec_from_file_location("gpu_smoke", module_path)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -68,7 +68,7 @@ def _assert_readable_video(path: Path) -> int:
 
 
 @pytest.mark.gpu
-def test_v02a_gpu_smoke_runner_matrix_writes_success_report(tmp_path):
+def test_gpu_smoke_runner_matrix_writes_success_report(tmp_path):
     """Run the real v0.2a GPU validation script and validate its JSON evidence."""
     _require_cuda()
     image = _env_path("MOTION_MIRROR_GPU_IMAGE")
@@ -79,8 +79,8 @@ def test_v02a_gpu_smoke_runner_matrix_writes_success_report(tmp_path):
         if item.strip()
     ]
     cache_dir = os.environ.get("MOTION_MIRROR_GPU_CACHE_DIR")
-    report = tmp_path / "v02a-gpu-smoke" / "report.json"
-    output_dir = tmp_path / "v02a-gpu-smoke" / "outputs"
+    report = tmp_path / "gpu-smoke" / "report.json"
+    output_dir = tmp_path / "gpu-smoke" / "outputs"
 
     argv = [
         "--image",

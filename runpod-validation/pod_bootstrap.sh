@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Motion Mirror GPU validation — runs ON a RunPod pod, launched via dockerArgs:
-#   cd /workspace && git clone -b runpod-v02a-validation <repo> repo \
+#   cd /workspace && git clone -b main <repo> repo \
 #     && bash repo/runpod-validation/pod_bootstrap.sh
 #
 # VACE lineup (Phase 2): a 3-smoke matrix on a large-disk GPU pod. Order is
@@ -352,7 +352,7 @@ prewarm_rembg() {
 
 IMAGE=$WS/inputs/character.jpg
 MOTION=$WS/inputs/motion.mp4
-SMOKE=$REPO/scripts/v02a_gpu_smoke.py
+SMOKE=$REPO/scripts/gpu_smoke.py
 
 run_smoke() { # run_smoke <name> <backend> [extra args...]
   local name=$1 backend=$2; shift 2

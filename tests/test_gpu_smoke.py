@@ -9,8 +9,8 @@ import numpy as np
 
 
 def _load_smoke_module():
-    module_path = Path(__file__).resolve().parents[1] / "scripts" / "v02a_gpu_smoke.py"
-    spec = importlib.util.spec_from_file_location("v02a_gpu_smoke", module_path)
+    module_path = Path(__file__).resolve().parents[1] / "scripts" / "gpu_smoke.py"
+    spec = importlib.util.spec_from_file_location("gpu_smoke", module_path)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)

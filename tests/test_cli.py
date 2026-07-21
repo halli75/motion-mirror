@@ -57,7 +57,7 @@ def test_help_lists_all_commands():
         assert cmd in out, f"Command '{cmd}' missing from --help"
 
 
-def test_run_help_documents_v02a_public_surface():
+def test_run_help_documents_public_surface():
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
     out = _plain(result.output)

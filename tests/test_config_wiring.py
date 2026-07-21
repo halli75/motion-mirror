@@ -1,4 +1,4 @@
-"""Tests for v0.2a config additions and pipeline wiring."""
+"""Tests for config additions and pipeline wiring."""
 from __future__ import annotations
 
 import re

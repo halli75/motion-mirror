@@ -102,9 +102,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         required=True,
         help="Backend to validate. Repeat to run a matrix.",
     )
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs/v02a-smoke"))
+    parser.add_argument("--output-dir", type=Path, default=Path("outputs/gpu-smoke"))
     parser.add_argument("--cache-dir", type=Path, default=None)
-    parser.add_argument("--report", type=Path, default=Path("outputs/v02a-smoke/report.json"))
+    parser.add_argument("--report", type=Path, default=Path("outputs/gpu-smoke/report.json"))
     parser.add_argument("--resolution", default="832x480")
     parser.add_argument("--frames", type=int, default=17)
     parser.add_argument("--steps", type=int, default=30, help="Denoising steps (1-200).")
@@ -282,7 +282,7 @@ def _read_frames(path: Path):
 
 
 # Structural thresholds, tuned against synthetic fixtures in
-# tests/test_v02a_gpu_smoke.py. Global luminance/variance stats proved
+# tests/test_gpu_smoke.py. Global luminance/variance stats proved
 # orthogonal to content on real GPU evidence (passed skeleton-on-blue,
 # rejected dancer-on-black), so the gate keys on foreground structure instead.
 _MIN_FOREGROUND_AREA_FRACTION = 0.02

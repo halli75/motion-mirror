@@ -425,13 +425,20 @@ def fetch_evidence(pod_id: str, role: str) -> None:
         paths += [
             "evidence/env.json", "evidence/nvidia-smi.txt", "evidence/pip-freeze.txt",
             "evidence/smoke/vace.json",
+            "evidence/smoke/vace-no-offload.json",
+            "evidence/smoke/vace-fast.json",
             "evidence/smoke/vace-14b-gguf.json",
+            "evidence/smoke/vace-14b-gguf-fast.json",
             "evidence/smoke/vace-14b.json",
+            "evidence/smoke/vace-14b-fast.json",
             # Videos too: on a salvage (wall/spend/stall) the completed smokes'
             # outputs are the judgment evidence — don't leave them on the pod.
             "evidence/smoke/vace/wan-1.3b-vace/result.mp4",
+            "evidence/smoke/vace-fast/wan-1.3b-vace/result.mp4",
             "evidence/smoke/vace-14b-gguf/wan-14b-vace-gguf/result.mp4",
+            "evidence/smoke/vace-14b-gguf-fast/wan-14b-vace-gguf/result.mp4",
             "evidence/smoke/vace-14b/wan-14b-vace/result.mp4",
+            "evidence/smoke/vace-14b-fast/wan-14b-vace/result.mp4",
             # Experiment-mode outputs (MM_EXPERIMENT=1). The pipeline writes
             # generated.mp4; the conditioning skeleton is the diagnosis artifact.
             "evidence/smoke/experiment.json",

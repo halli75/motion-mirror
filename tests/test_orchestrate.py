@@ -88,6 +88,91 @@ def test_gql_retries_transient_timeouts(monkeypatch):
     assert calls["n"] == 3
 
 
+def _seed_state(orch, tmp_path, pod_id):
+    orch.STATE_FILE = tmp_path / "state.json"
+    orch._save_state(
+        {"pods": {pod_id: {"cost_per_hr": 0.27, "launched_at": 0.0}}, "spent_usd": 0.0}
+    )
+
+
+def test_terminate_does_not_mark_state_on_network_failure(monkeypatch, tmp_path):
+    orch = _load_orchestrate_module()
+    _seed_state(orch, tmp_path, "pod-a")
+
+    def failing_gql(*args, **kwargs):
+        raise TimeoutError("network down")
+
+    monkeypatch.setattr(orch, "gql", failing_gql)
+    try:
+        orch.terminate("pod-a")
+        raise AssertionError("expected TimeoutError")
+    except TimeoutError:
+        pass
+    assert not orch._state()["pods"]["pod-a"].get("terminated")
+
+
+def test_terminate_marks_state_on_success(monkeypatch, tmp_path):
+    orch = _load_orchestrate_module()
+    _seed_state(orch, tmp_path, "pod-a")
+    monkeypatch.setattr(orch, "gql", lambda *a, **k: {"podTerminate": None})
+    orch.terminate("pod-a")
+    pod = orch._state()["pods"]["pod-a"]
+    assert pod["terminated"] is True
+    assert pod["ended_at"] > 0
+
+
+def test_terminate_with_retry_retries_until_mutation_succeeds(monkeypatch, tmp_path):
+    orch = _load_orchestrate_module()
+    _seed_state(orch, tmp_path, "pod-a")
+    monkeypatch.setattr(orch.time, "sleep", lambda _s: None)
+    calls = {"n": 0}
+
+    def flaky_gql(query, *args, **kwargs):
+        calls["n"] += 1
+        if "podTerminate" in query and calls["n"] >= 3:
+            return {"podTerminate": None}
+        raise TimeoutError("network down")
+
+    monkeypatch.setattr(orch, "gql", flaky_gql)
+    assert orch.terminate_with_retry("pod-a") is True
+    assert orch._state()["pods"]["pod-a"]["terminated"] is True
+
+
+def test_terminate_with_retry_accepts_pod_confirmed_gone(monkeypatch, tmp_path):
+    orch = _load_orchestrate_module()
+    _seed_state(orch, tmp_path, "pod-a")
+    monkeypatch.setattr(orch.time, "sleep", lambda _s: None)
+
+    def gone_gql(query, *args, **kwargs):
+        if "podTerminate" in query:
+            raise RuntimeError("GraphQL errors: pod not found")
+        return {"pod": None}
+
+    monkeypatch.setattr(orch, "gql", gone_gql)
+    assert orch.terminate_with_retry("pod-a") is True
+    assert orch._state()["pods"]["pod-a"]["terminated"] is True
+
+
+def test_terminate_with_retry_gives_up_after_window(monkeypatch, tmp_path):
+    orch = _load_orchestrate_module()
+    _seed_state(orch, tmp_path, "pod-a")
+    monkeypatch.setattr(orch.time, "sleep", lambda _s: None)
+    clock = {"t": 0.0}
+
+    def fake_time():
+        clock["t"] += orch.TERMINATE_RETRY_WINDOW_S / 4
+        return clock["t"]
+
+    monkeypatch.setattr(orch.time, "time", fake_time)
+
+    def dead_gql(*args, **kwargs):
+        raise TimeoutError("network down")
+
+    monkeypatch.setattr(orch, "gql", dead_gql)
+    assert orch.terminate_with_retry("pod-a") is False
+    assert not orch._state()["pods"]["pod-a"].get("terminated")
+
+
 def test_gql_single_attempt_when_retries_1(monkeypatch):
     orch = _load_orchestrate_module()
     monkeypatch.setenv("RUNPOD_API_KEY", "test-key")

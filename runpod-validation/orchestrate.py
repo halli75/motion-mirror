@@ -89,6 +89,15 @@ EXPERIMENT_ROLE_OVERRIDES = {"disk_gb": 120, "min_ram_gb": 40}
 
 POLL_S = 30
 PROVISION_TIMEOUT_S = 15 * 60
+# Errors that mean "network is down right now", not "the request is wrong".
+# TimeoutError/URLError are OSError subclasses; the tuple stays explicit for
+# readers grepping the failure mode.
+NETWORK_ERRORS = (TimeoutError, urllib.error.URLError, ConnectionError, OSError)
+# A local DNS outage mid-run (2026-07-21) made the single terminate attempt
+# fail and orphaned a billing pod. Retry through the outage until the API
+# confirms the pod is gone.
+TERMINATE_RETRY_WINDOW_S = 30 * 60
+TERMINATE_RETRY_DELAY_S = 30
 # RunPod community 4090s are a per-host driver lottery: 570/CUDA12.8 hosts run
 # our cu128 stack, 580/CUDA13.0 hosts fail torch CUDA init on the identical
 # stack (observed 2026-07-08, two in a row). Such a pod aborts in ~1.5 min for
@@ -394,19 +403,50 @@ def pod_status(pod_id: str) -> dict | None:
     return data.get("pod")
 
 
+def _mark_terminated(pod_id: str) -> None:
+    state = _state()
+    state["pods"][pod_id]["terminated"] = True
+    state["pods"][pod_id].setdefault("ended_at", time.time())
+    _save_state(state)
+
+
 def terminate(pod_id: str) -> None:
     state = _state()
     if pod_id not in state["pods"]:
         sys.exit(f"refusing to terminate {pod_id}: not created by this orchestrator")
-    try:
-        gql("mutation($podId: String!) { podTerminate(input:{podId:$podId}) }",
-            {"podId": pod_id})
-        print(f"terminated pod {pod_id}")
-    finally:
-        state = _state()
-        state["pods"][pod_id]["terminated"] = True
-        state["pods"][pod_id].setdefault("ended_at", time.time())
-        _save_state(state)
+    gql("mutation($podId: String!) { podTerminate(input:{podId:$podId}) }",
+        {"podId": pod_id})
+    # Only mark state on API success: marking in a finally block once recorded
+    # a pod as terminated while it kept billing through a network outage.
+    _mark_terminated(pod_id)
+    print(f"terminated pod {pod_id}")
+
+
+def terminate_with_retry(pod_id: str) -> bool:
+    """Terminate a pod, retrying through network outages until confirmed gone."""
+    deadline = time.time() + TERMINATE_RETRY_WINDOW_S
+    while True:
+        try:
+            terminate(pod_id)
+            return True
+        except NETWORK_ERRORS + (RuntimeError,) as exc:
+            print(f"terminate attempt failed: {exc}")
+        try:
+            pod = pod_status(pod_id)
+            if pod is None or pod.get("desiredStatus") in ("EXITED", "TERMINATED"):
+                _mark_terminated(pod_id)
+                print(f"pod {pod_id} confirmed gone")
+                return True
+        except NETWORK_ERRORS:
+            pass
+        if time.time() >= deadline:
+            print(f"TERMINATE FAILED for {pod_id} after "
+                  f"{TERMINATE_RETRY_WINDOW_S // 60} min of retries — terminate "
+                  f"manually: python runpod-validation/orchestrate.py terminate "
+                  f"--pod-id {pod_id}")
+            return False
+        print(f"retrying terminate in {TERMINATE_RETRY_DELAY_S}s")
+        time.sleep(TERMINATE_RETRY_DELAY_S)
 
 
 def fetch_evidence(pod_id: str, role: str) -> None:
@@ -516,7 +556,17 @@ def run(role: str, attach_pod_id: str | None = None, experiment: dict | None = N
                 fetch_evidence(pod_id, role)
                 return 4
 
-            pod = pod_status(pod_id)
+            try:
+                pod = pod_status(pod_id)
+            except NETWORK_ERRORS as exc:
+                # Local outage (2026-07-21: DNS died mid-run and the raised
+                # error killed this loop, orphaning a billing pod). The pod
+                # works autonomously; keep looping until the network returns.
+                # Freeze the stall clock so outage time doesn't count as a
+                # heartbeat stall; wall/spend caps still bound the run.
+                print(f"local network unreachable ({exc}); pod continues — waiting")
+                last_beat_change = now
+                continue
             runtime_up = bool(pod and pod.get("runtime"))
             if not runtime_up:
                 # The API transiently returns runtime:null on healthy pods
@@ -539,7 +589,8 @@ def run(role: str, attach_pod_id: str | None = None, experiment: dict | None = N
                     print("pod runtime dropped (confirmed x3)")
                     if not retried:
                         print("retrying once with a fresh pod")
-                        terminate(pod_id)
+                        if not terminate_with_retry(pod_id):
+                            return 5
                         retried = True
                         pod_id = launch(role, experiment=experiment)
                         started, first_beat = time.time(), None
@@ -552,7 +603,8 @@ def run(role: str, attach_pod_id: str | None = None, experiment: dict | None = N
                 if now - started > PROVISION_TIMEOUT_S:
                     print("provisioning timeout")
                     if not retried:
-                        terminate(pod_id)
+                        if not terminate_with_retry(pod_id):
+                            return 5
                         retried = True
                         pod_id = launch(role, experiment=experiment)
                         started, first_beat = time.time(), None
@@ -603,7 +655,8 @@ def run(role: str, attach_pod_id: str | None = None, experiment: dict | None = N
                         cuda_retries += 1
                         print(f"pod GPU driver can't init CUDA — recycling fresh pod "
                               f"({cuda_retries}/{MAX_CUDA_RETRIES})")
-                        terminate(pod_id)
+                        if not terminate_with_retry(pod_id):
+                            return 5
                         pod_id = launch(role, experiment=experiment)
                         started, first_beat = time.time(), None
                         last_beat_value, last_beat_change = None, time.time()
@@ -620,16 +673,14 @@ def run(role: str, attach_pod_id: str | None = None, experiment: dict | None = N
                     return exit_code
     finally:
         try:
-            terminate(pod_id)
+            terminate_with_retry(pod_id)
         except SystemExit:
             pass
-        except Exception as exc:  # noqa: BLE001
-            print(f"TERMINATE FAILED for {pod_id}: {exc} — terminate manually!")
         state = _state()
         if pod_id in state["pods"]:
-            state["pods"][pod_id]["ended_at"] = time.time()
+            state["pods"][pod_id].setdefault("ended_at", time.time())
             _save_state(state)
-        print(f"session spend estimate: ${our_spend(_state()):.2f}")
+        print(f"orchestrator lifetime spend estimate: ${our_spend(_state()):.2f}")
 
 
 def main() -> int:
